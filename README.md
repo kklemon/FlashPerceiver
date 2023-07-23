@@ -6,12 +6,12 @@ Fast and memory efficient PyTorch implementation of the Perceiver [1, 2, 3] atte
 Features:
 
 * ⚡ More than 2x speedup over naive implementation
-* ⚡ Sub-linear[^1] memory usage with respect to input sequence length and linear memory usage with respect to number of latent vectors
+* ⚡ Sub-linear<sup>1</sup> memory usage with respect to input sequence length and linear usage with respect to number of latent vectors
 * ⚡ Out-of-the-box support for rotary positional embeddings [6]
-* ⚡ Use new and improved FlashAttention-2 implementation
+* ⚡ Uses new and improved FlashAttention-2 implementation
 * ⚡ Supports arbitrary masking of inputs
 
-[^1]. For the attention components. See [Performance](#Performance) for more information.
+<sup>1</sup> For the attention components. See [Performance](#performance) for more information.
 
 Installation
 ------------
@@ -20,7 +20,7 @@ Installation
 pip install fast-perceiver
 ```
 
-[FlashAttention](https://github.com/Dao-AILab/flash-attention) will be installed as part of the dependencies and may have to be compiled locally. Note that this may take a while and fail for unsupported GPUs or CUDA versions. Please refer to the linked repository for further information and help with the installation.
+[FlashAttention](https://github.com/Dao-AILab/flash-attention) will be installed as part of the dependencies and may have to be compile locally. Note that this may take a while and fail for unsupported GPUs or CUDA versions. Please refer to the linked repository for further information and help with the installation.
 
 Usage
 -----
@@ -53,14 +53,19 @@ model = Perceiver(
 ).cuda()
 
 x = torch.randn(32, 128, in_dim).cuda()
+mask = torch.rand(32, 128) > 0.5
 
 # FlashAttention only works with half-precision
 # Don't forget to autocast!
 with torch.autocast('cuda'):
-    # `out_dim`` specified; averages and projects output
+    # `out_dim` specified; averages and projects output
     out = model(x)
 
     assert out.shape == (32, out_dim)
+
+    # A input element-wise mask can be provided
+    # All non-True elements will be ignored
+    out = model(x, mask=mask)
 
     # The raw final latents will be returned when `return_embeddings=True`
     embeds = model(x, return_embeddings=True)
@@ -73,7 +78,7 @@ Performance
 
 The Perceiver is already designed and intended as a attention architecture with sub-quadratic compute and memory complexity in comparison to the quadratic requirements of a vanilla Transformer.
 
-A naive implementation will have $\mathcal{O}(nm)$ memory requirements for the cross-attention modules and $\mathcal{O}(n^2)$ complexity for the self-attention or _latent_ blocks, where $n$ is the number of latent vectors (fixed hyperparameter) and $m$ is the number of input elements.
+A naive implementation will have $\mathcal{O}(nm)$ memory requirements for the cross-attention modules and $\mathcal{O}(n^2)$ complexity for the self-attention or _latent_ blocks, where $n$ is the number of latent vectors (fixed hyperparameter), $m$ the number of input elements and $m \gg n$ should generally apply.
 
 FlashAttention allows a memory usage reduction to $\mathcal{O}(n)$ for the cross-attention layers and $\mathcal{O}(n)$ for the self-attention layers. However, this only accounts for the computation of the attention mechanisms. The input sequence and corresponding keys and values within the cross-attention modules will still grow with $m$.
 
