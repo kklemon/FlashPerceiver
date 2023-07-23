@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "fast-perceiver"
-version = "0.1.1"
+version = "0.1.2"
 description = ""
 authors = ["Kristian Klemon <kristian.klemon@gmail.com>"]
 readme = "README.md"
@@ -12,6 +12,7 @@ torch = {version = "^2.0.1", source = "pytorch-gpu-src"}
 torchvision = {version = "^0.15.2", source = "pytorch-gpu-src"}
 einops = "^0.6.1"
 flash-attn = "^2.0.0.post1"
+packaging = "^23.1"
 
 
 [[tool.poetry.source]]
