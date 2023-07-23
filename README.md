@@ -44,10 +44,12 @@ model = Perceiver(
     latent_dim=latent_dim,
     cross_heads=1,
     cross_head_dim=64,
+    cross_rotary_emb_dim=0,
+    cross_attn_dropout=0.0,
     latent_heads=8,
     latent_head_dim=64,
-    cross_attn_dropout=0.0,
-    self_attn_dropout=0.0,
+    latent_rotary_emb_dim=0,
+    latent_attn_dropout=0.0,
     weight_tie_layers=False,
     gated_mlp=True,
 ).cuda()
@@ -118,6 +120,7 @@ These are a few features that are either planned or WIP. If you have urgent dema
 - [ ] Tests [WIP]
 - [ ] Allow more flexible cross-attention configurations
 - [ ] Benchmarks against other Perceiver implementations, e.g. [DeepMind's](https://github.com/deepmind/deepmind-research/tree/master/perceiver) or [Krasser's](https://github.com/krasserm/perceiver-io)
+- [ ] If FA2 is eventuelly merged into PyTorch, drop the flash-attn dependency
 
 References
 ----------
