@@ -185,6 +185,8 @@ class Perceiver(nn.Module):
                 'max_seqlen_k': max_seqlen_in_batch
             }
 
+            print(data.shape)
+
         for cross_block, self_attn_blocks in self.layers:
             x = cross_block(x, mixer_kwargs=cross_block_kwargs)[0]
 
