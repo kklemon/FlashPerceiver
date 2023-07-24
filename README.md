@@ -32,6 +32,7 @@ from fast_perceiver import Perceiver
 
 in_dim = 256
 out_dim = 128
+seq_len = 128
 
 latent_dim = 512
 num_latents = 512
@@ -52,27 +53,31 @@ model = Perceiver(
     latent_attn_dropout=0.0,
     weight_tie_layers=False,
     gated_mlp=True,
-).cuda()
+)
 
-x = torch.randn(32, 128, in_dim).cuda()
-mask = torch.rand(32, 128) > 0.5
+# Note: FlashAttention only supports half-precision
+# We need to explicitly cast the model or alternative use torch.autocast
+model.to('cuda', torch.float16)
 
-# FlashAttention only works with half-precision
-# Don't forget to autocast!
-with torch.autocast('cuda'):
-    # `out_dim` specified; averages and projects output
-    out = model(x)
+x = torch.randn(32, seq_len, in_dim, dtype=torch.float16, device='cuda')
 
-    assert out.shape == (32, out_dim)
+seq_lens = torch.randint(1, seq_len + 1, (32,), device=x.device)
+mask = torch.arange(seq_len, device=x.device)[None, :] < seq_lens[:, None]
 
-    # A input element-wise mask can be provided
-    # All non-True elements will be ignored
-    out = model(x, mask=mask)
 
-    # The raw final latents will be returned when `return_embeddings=True`
-    embeds = model(x, return_embeddings=True)
+# `out_dim` specified; averages and projects output
+out = model(x)
 
-    assert embeds.shape == (32, num_latents, latent_dim)
+assert out.shape == (32, out_dim)
+
+# A input element-wise mask can be provided
+# All non-True elements will be ignored
+out = model(x, mask=mask)
+
+# The raw final latents will be returned when `return_embeddings=True`
+embeds = model(x, return_embeddings=True)
+
+assert embeds.shape == (32, num_latents, latent_dim)
 ```
 
 Performance

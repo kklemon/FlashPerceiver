@@ -1,3 +1,4 @@
+from typing import Optional
 import torch
 
 from functools import partial
@@ -6,43 +7,57 @@ from torch import nn
 from einops import repeat
 from einops.layers.torch import Reduce
 
-from flash_attn.bert_padding import unpad_input
-from flash_attn.modules.mha import MHA
+from flash_attn.bert_padding import pad_input, unpad_input
+from flash_attn.modules.mha import MHA, ParallelMHA
 from flash_attn.modules.block import Block
 from flash_attn.modules.mlp import Mlp, GatedMlp
 
 from fast_perceiver.utils import cache_fn
 
 
-class BetterMHA(MHA):
-    """
-    Wrapper around FA's MHA to support separate q and kv dim and more API flexibility.
-    """
-    def __init__(self, embed_dim, *args, kv_dim=None, num_heads=8, head_dim=None, **kwargs):
-        if num_heads is None:
-            assert head_dim is not None, 'Must specify either num_heads or head_dim'
-            kwargs['num_heads'] = embed_dim // head_dim
+def patched_mha(base_mha_cls):
+    class PatchedMHA(base_mha_cls):
+        """
+        Wrapper around FA's MHA to support separate q and kv dim and more API flexibility.
+        """
+        def __init__(
+            self,
+            embed_dim: int,
+            *args,
+            kv_dim: Optional[int] = None,
+            num_heads: Optional[int] = 8,
+            head_dim: Optional[int] = None,
+            **kwargs
+        ):
+            if num_heads is None:
+                assert head_dim is not None, 'Must specify either num_heads or head_dim'
+                kwargs['num_heads'] = embed_dim // head_dim
 
-        super().__init__(embed_dim, num_heads, *args, **kwargs)
+            super().__init__(embed_dim, num_heads, *args, **kwargs)
 
-        self.kv_dim = kv_dim or self.embed_dim
+            self.kv_dim = kv_dim or self.embed_dim
 
-        if head_dim is not None:
-            self.head_dim = head_dim
-        
-        inner_dim = self.num_heads * self.head_dim
-        linear_cls = self.out_proj.__class__
+            if head_dim is not None:
+                self.head_dim = head_dim
+            
+            inner_dim = self.num_heads * self.head_dim
+            linear_cls = self.out_proj.__class__
 
-        qkv_proj_bias = kwargs.get('qkv_proj_bias', True)
-        out_proj_bias = kwargs.get('out_proj_bias', True)
+            qkv_proj_bias = kwargs.get('qkv_proj_bias', True)
+            out_proj_bias = kwargs.get('out_proj_bias', True)
 
-        if self.cross_attn:
-            self.Wq = linear_cls(self.embed_dim, inner_dim, bias=qkv_proj_bias)
-            self.Wkv = linear_cls(self.kv_dim, 2 * inner_dim, bias=qkv_proj_bias)
-        else:
-            self.Wqkv = linear_cls(self.embed_dim, 3 * inner_dim, bias=qkv_proj_bias)
+            if self.cross_attn:
+                self.Wq = linear_cls(self.embed_dim, inner_dim, bias=qkv_proj_bias)
+                self.Wkv = linear_cls(self.kv_dim, 2 * inner_dim, bias=qkv_proj_bias)
+            else:
+                self.Wqkv = linear_cls(self.embed_dim, 3 * inner_dim, bias=qkv_proj_bias)
 
-        self.out_proj = linear_cls(inner_dim, self.embed_dim, bias=out_proj_bias)
+            self.out_proj = linear_cls(inner_dim, self.embed_dim, bias=out_proj_bias)
+
+    return PatchedMHA
+
+PatchedMHA = patched_mha(MHA)
+PatchedParallelMHA = patched_mha(ParallelMHA)
 
 
 class Perceiver(nn.Module):
@@ -77,27 +92,29 @@ class Perceiver(nn.Module):
     def __init__(
         self,
         *,
-        input_dim,
-        depth,
-        out_dim=None,
-        num_latents=512,
-        latent_dim=512,
-        cross_heads=1,
-        cross_head_dim=64,
-        cross_rotary_emb_dim=0,
-        cross_attn_dropout=0.0,
-        latent_heads=8,
-        latent_head_dim=64,
-        latent_rotary_emb_dim=0,
-        latent_attn_dropout=0.0,
-        weight_tie_layers=False,
-        gated_mlp=True,
-        self_per_cross_attn=1,
+        input_dim: int,
+        depth: int,
+        out_dim: Optional[int] = None,
+        num_latents: int = 512,
+        latent_dim: int = 512,
+        cross_heads: int = 1,
+        cross_head_dim: int = 64,
+        cross_rotary_emb_dim: int = 0,
+        cross_attn_dropout: float = 0.0,
+        latent_heads: int =8,
+        latent_head_dim: int = 64,
+        latent_rotary_emb_dim: int = 0,
+        latent_attn_dropout: float = 0.0,
+        weight_tie_layers: bool = False,
+        gated_mlp: bool = True,
+        use_parallel_mha: bool = False,
+        self_per_cross_attn: int = 1,
     ):
         super().__init__()
 
         self.input_dim = input_dim
 
+        self.num_latents = num_latents
         self.latents = nn.Parameter(torch.randn(num_latents, latent_dim))
 
         if gated_mlp:
@@ -105,10 +122,15 @@ class Perceiver(nn.Module):
         else:
             mlp_cls = Mlp
 
+        if use_parallel_mha:
+            mha_cls = PatchedParallelMHA
+        else:
+            mha_cls = PatchedMHA
+
         get_cross_attn_block = lambda: Block(
             dim=latent_dim,
             mixer_cls=partial(
-                BetterMHA,
+                mha_cls,
                 kv_dim=input_dim,
                 num_heads=cross_heads,
                 head_dim=cross_head_dim,
@@ -124,7 +146,7 @@ class Perceiver(nn.Module):
         get_self_attn_block = lambda: Block(
             dim=latent_dim,
             mixer_cls=partial(
-                BetterMHA,
+                mha_cls,
                 num_heads=latent_heads,
                 head_dim=latent_head_dim,
                 dropout=latent_attn_dropout,
@@ -177,18 +199,34 @@ class Perceiver(nn.Module):
         cross_block_kwargs = {'x_kv': data}
 
         if mask is not None:
-            data, _, cu_seqlens, max_seqlen_in_batch = unpad_input(data, ~mask)
+            data, _, cu_seqlens_k, max_seqlen_in_batch_k = unpad_input(data, mask)
 
             cross_block_kwargs = {
                 'x_kv': data,
-                'cu_seqlens_k': cu_seqlens,
-                'max_seqlen_k': max_seqlen_in_batch
+                'cu_seqlens_k': cu_seqlens_k,
+                'max_seqlen_k': max_seqlen_in_batch_k
             }
 
-            print(data.shape)
-
         for cross_block, self_attn_blocks in self.layers:
-            x = cross_block(x, mixer_kwargs=cross_block_kwargs)[0]
+            # FlashAttention currently does not support key-value-only padding
+            # We therefore have to _unpad_ the queries (aka latents) as well.
+            # In the future, this could be used for a Perceiver AR implementation.
+            # TODO: We could compuet the dummy mask tensors for the queries directly here
+            #  without calling the unpad_input function.
+            if mask is not None:
+                x_mask = torch.ones(x.shape[:2], dtype=torch.bool, device=x.device)
+                x_cross, indices, cu_seqlens, max_seqlen_in_batch = unpad_input(x, x_mask)
+                cross_block_kwargs.update({
+                    'cu_seqlens': cu_seqlens,
+                    'max_seqlen': max_seqlen_in_batch
+                })
+            else:
+                x_cross = x
+
+            x = cross_block(x_cross, mixer_kwargs=cross_block_kwargs)[0]
+
+            if mask is not None:
+                x = pad_input(x, indices, batch_size, self.num_latents)
 
             for self_attn_block in self_attn_blocks:
                 x = self_attn_block(x)[0]
