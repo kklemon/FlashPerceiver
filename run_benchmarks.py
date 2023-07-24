@@ -1,5 +1,6 @@
 import argparse
 from contextlib import contextmanager
+from functools import partial
 import gc
 from timeit import default_timer
 import torch
@@ -17,7 +18,7 @@ from fast_perceiver import Perceiver
 sns.set_theme()
 
 
-def build_lucidrains_perceiver(config):
+def build_lucidrains_perceiver(config, **kwargs):
     return LucidrainsPerceiver(
         input_channels=config['input_dim'],
         input_axis=1,
@@ -28,15 +29,17 @@ def build_lucidrains_perceiver(config):
         depth=config['depth'],
         final_classifier_head=False,
         fourier_encode_data=False,
+        **kwargs
     )
 
 
-def build_fast_perceiver(config):
+def build_fast_perceiver(config, **kwargs):
     return Perceiver(
         input_dim=config['input_dim'],
         depth=config['depth'],
         num_latents=config['num_latents'],
-        latent_dim=config['latent_dim']
+        latent_dim=config['latent_dim'],
+        **kwargs
     )
 
 
@@ -82,7 +85,8 @@ benchmark_configs = [
 
 models = {
     'perceiver-pytorch': build_lucidrains_perceiver,
-    'fast-perceiver': build_fast_perceiver
+    'fast-perceiver': build_fast_perceiver,
+    # 'fast-perceiver (parallel MHA)': partial(build_fast_perceiver, use_parallel_mha=True),
 }
 
 
@@ -136,8 +140,8 @@ def benchmark_single(model_factory, config, handle_oom=False):
             data_loader = DataLoader(dataset, batch_size=None)
             batches = list(islice(data_loader, num_batches))
 
-            def run_epoch():
-                for batch in tqdm(batches):
+            def run_epoch(_batches):
+                for batch in _batches:
                     out = model(batch.to(device))
                     out.mean().backward()
                 
@@ -145,10 +149,10 @@ def benchmark_single(model_factory, config, handle_oom=False):
             
             with torch.autocast('cuda'):
                 # First some warmup
-                run_epoch()
+                run_epoch(batches[:1])
 
                 with elapsed_timer() as elapser:
-                    run_epoch()
+                    run_epoch(tqdm(batches))
                     return elapser()
         
         except OutOfMemoryError:
