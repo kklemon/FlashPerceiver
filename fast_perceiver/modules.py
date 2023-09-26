@@ -211,11 +211,12 @@ class Perceiver(nn.Module):
             # FlashAttention currently does not support key-value-only padding
             # We therefore have to _unpad_ the queries (aka latents) as well.
             # In the future, this could be used for a Perceiver AR implementation.
-            # TODO: We could compuet the dummy mask tensors for the queries directly here
+            # TODO: We could compute the dummy mask tensors for the queries directly here
             #  without calling the unpad_input function.
             if mask is not None:
                 x_mask = torch.ones(x.shape[:2], dtype=torch.bool, device=x.device)
                 x_cross, indices, cu_seqlens, max_seqlen_in_batch = unpad_input(x, x_mask)
+                
                 cross_block_kwargs.update({
                     'cu_seqlens': cu_seqlens,
                     'max_seqlen': max_seqlen_in_batch
