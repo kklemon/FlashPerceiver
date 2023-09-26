@@ -7,7 +7,11 @@ from pathlib import Path
 
 sns.set_theme()
 
-hue_model_order = ['perceiver-pytorch', 'flash-attention-perceiver']
+hue_model_order = [
+    'perceiver-pytorch',
+    'fast-perceiver',
+    # 'fast-perceiver (parallel MHA)'
+]
 
 
 def calc_relative_improvement(s, col):

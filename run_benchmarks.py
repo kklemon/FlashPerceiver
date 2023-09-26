@@ -2,6 +2,7 @@ import argparse
 from contextlib import contextmanager
 from functools import partial
 import gc
+import logging
 from timeit import default_timer
 import torch
 import pandas as pd
@@ -16,6 +17,11 @@ from fast_perceiver import Perceiver
 
 
 sns.set_theme()
+
+logging.basicConfig(level=logging.INFO,
+                    format='[%(levelname)s] - %(asctime)s - %(message)s',
+                    datefmt='%Y-%m-%d %H:%M:%S')
+logger = logging.getLogger()
 
 
 def build_lucidrains_perceiver(config, **kwargs):
@@ -44,7 +50,6 @@ def build_fast_perceiver(config, **kwargs):
 
 
 num_batches = 100
-device = 'cuda'
 
 default_config = {
     'batch_size': 256,
@@ -86,6 +91,7 @@ benchmark_configs = [
 models = {
     'perceiver-pytorch': build_lucidrains_perceiver,
     'fast-perceiver': build_fast_perceiver,
+    # TODO: not implemented yet
     # 'fast-perceiver (parallel MHA)': partial(build_fast_perceiver, use_parallel_mha=True),
 }
 
@@ -122,19 +128,21 @@ def create_configs(configs):
 def elapsed_timer():
     start = default_timer()
     elapser = lambda: default_timer() - start
+
     yield lambda: elapser()
+
     end = default_timer()
     elapser = lambda: end - start
 
 
-def benchmark_single(model_factory, config, handle_oom=False):
+def benchmark_single(model_factory, config, pbar=True, handle_oom=False):
     orig_config = config
 
     while True:
         try:
             config = {**default_config, **orig_config}
 
-            model = model_factory(config).to(device)
+            model = model_factory(config)
             dataset = DummyDataset(config['input_dim'], config['input_size'], config['batch_size'])
                                             
             data_loader = DataLoader(dataset, batch_size=None)
@@ -142,25 +150,28 @@ def benchmark_single(model_factory, config, handle_oom=False):
 
             def run_epoch(_batches):
                 for batch in _batches:
-                    out = model(batch.to(device))
+                    out = model(batch)
                     out.mean().backward()
                 
                 torch.cuda.synchronize()
             
             with torch.autocast('cuda'):
-                # First some warmup
+                # Do some warmup first
                 run_epoch(batches[:1])
 
+                if pbar:
+                    batches = tqdm(batches[1:])
+
                 with elapsed_timer() as elapser:
-                    run_epoch(tqdm(batches))
+                    run_epoch(batches)
                     return elapser()
         
         except OutOfMemoryError:
             if not handle_oom:
                 raise
 
-            print('OOM, retrying; reducing batch size from '
-                  f'{config["batch_size"]} to {config["batch_size"] // 2}')
+            logger.info('OOM, retrying; reducing batch size from '
+                       f'{config["batch_size"]} to {config["batch_size"] // 2}')
             orig_config["batch_size"] //= 2
 
 
@@ -173,17 +184,23 @@ def reset_all():
     
 
 def main(args):
+    torch.set_default_device(args.device)
+    torch.set_default_dtype(torch.float16)
+
+    if args.quiet:
+        logger.removeHandler(logger.handlers[0])
+
     results = []
 
     for model_name, model_factory in models.items():
-        print(f'Benchmarking {model_name}')
+        logger.info(f'Benchmarking {model_name}')
 
         for config in create_configs(benchmark_configs):
-            print(config)
+            logger.info(config)
 
             reset_all()
 
-            run_time = benchmark_single(model_factory, config)
+            run_time = benchmark_single(model_factory, config, pbar=not args.quiet)
 
             mem = torch.cuda.max_memory_allocated() / ((2 ** 20) * 1000)
 
@@ -207,4 +224,7 @@ def main(args):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--output_path', type=str, default='benchmark_results.csv')
+    parser.add_argument('--quiet', '-q', action='store_true')
+    parser.add_argument('--device', default='cuda')
+    
     main(parser.parse_args())
