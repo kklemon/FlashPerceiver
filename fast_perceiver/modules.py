@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import List, Optional
 import torch
 
 from functools import partial
@@ -31,7 +31,7 @@ def patched_mha(base_mha_cls):
         ):
             if num_heads is None:
                 assert head_dim is not None, 'Must specify either num_heads or head_dim'
-                kwargs['num_heads'] = embed_dim // head_dim
+                num_heads = embed_dim // head_dim
 
             super().__init__(embed_dim, num_heads, *args, **kwargs)
 
@@ -59,6 +59,8 @@ def patched_mha(base_mha_cls):
 PatchedMHA = patched_mha(MHA)
 PatchedParallelMHA = patched_mha(ParallelMHA)
 
+T = torch.Tensor
+
 
 class Perceiver(nn.Module):
     """
@@ -67,7 +69,9 @@ class Perceiver(nn.Module):
 
     Args:
         input_dim: Dimension (last axis) of input
-        depth: Number of self-attention (latent processing) blocks.
+        depth: Number of cross-self-attention blocks. One such block corresponds to
+            a cross-attention module followed by `self_per_cross_attn` self-attention modules.
+            The number of overall attention modules is therefore `depth * (1 + self_per_cross_attn)`.
         out_dim: Dimension of output. If None, no output projection is applied
             and the final latents are returned.
         num_latents: Number of latent vectors.
@@ -92,16 +96,16 @@ class Perceiver(nn.Module):
     def __init__(
         self,
         *,
-        input_dim: int,
+        input_dim: List[int] | int,
         depth: int,
-        out_dim: Optional[int] = None,
-        num_latents: int = 512,
+        output_dim: Optional[int] = None,
+        num_latents: Optional[int] = 512,
         latent_dim: int = 512,
         cross_heads: int = 1,
         cross_head_dim: int = 64,
         cross_rotary_emb_dim: int = 0,
         cross_attn_dropout: float = 0.0,
-        latent_heads: int =8,
+        latent_heads: int = 8,
         latent_head_dim: int = 64,
         latent_rotary_emb_dim: int = 0,
         latent_attn_dropout: float = 0.0,
@@ -111,11 +115,23 @@ class Perceiver(nn.Module):
         self_per_cross_attn: int = 1,
     ):
         super().__init__()
+        
+        if isinstance(input_dim, (tuple, list)):
+            assert len(input_dim) == depth, 'Must specify input_dim for each layer'
+            assert not weight_tie_layers, 'Cannot weight tie layers with different input dimensions'
 
-        self.input_dim = input_dim
+            self.input_dims = input_dim
+        else:
+            self.input_dims = [input_dim] * depth
 
         self.num_latents = num_latents
-        self.latents = nn.Parameter(torch.randn(num_latents, latent_dim))
+        self.latent_dim = latent_dim
+        self.depth = depth
+
+        if self.num_latents is not None:
+            self.latents = nn.Parameter(torch.randn(num_latents, latent_dim))
+        else:
+            self.latents = None
 
         if gated_mlp:
             mlp_cls = partial(GatedMlp, hidden_features=latent_dim * 4)
@@ -127,11 +143,11 @@ class Perceiver(nn.Module):
         else:
             mha_cls = PatchedMHA
 
-        get_cross_attn_block = lambda: Block(
+        get_cross_attn_block = lambda in_dim: Block(
             dim=latent_dim,
             mixer_cls=partial(
                 mha_cls,
-                kv_dim=input_dim,
+                kv_dim=in_dim,
                 num_heads=cross_heads,
                 head_dim=cross_head_dim,
                 cross_attn=True,
@@ -160,7 +176,7 @@ class Perceiver(nn.Module):
 
         self.layers = nn.ModuleList([])
 
-        for i in range(depth):
+        for i, in_dim in enumerate(self.input_dims):
             should_cache = i > 0 and weight_tie_layers
             cache_args = {'_cache': should_cache}
 
@@ -170,44 +186,80 @@ class Perceiver(nn.Module):
                 self_attns.append(get_self_attn_block(**cache_args, key=block_idx))
 
             self.layers.append(nn.ModuleList([
-                get_cross_attn_block(**cache_args),
+                get_cross_attn_block(in_dim=in_dim, **cache_args),
                 self_attns
             ]))
 
-        if out_dim is not None:
+        if output_dim is not None:
             self.out_proj = nn.Sequential(
                 Reduce('b n d -> b d', 'mean'),
                 nn.LayerNorm(latent_dim),
-                nn.Linear(latent_dim, out_dim)
+                nn.Linear(latent_dim, output_dim)
             )
         else:
             self.out_proj = nn.Identity()
 
 
+    def _validate_data(self, data: List[T] | T, mask: List[T] | T | None = None):
+        if isinstance(data, T):
+            data = [data] * self.depth
+            mask = [mask] * self.depth
+        else:
+            assert len(data) == self.depth, f'Expected {self.depth} inputs, but found {len(data)}'
+
+            if mask is not None:
+                assert isinstance(mask, (tuple, list)), \
+                    'If a list of data tensors is provided, mask must have the same format'
+                assert len(mask) == self.depth, f'Expected {self.depth} masks, but found {len(mask)}'
+            else:
+                mask = [None] * self.depth
+        
+        assert all(d.shape[-1] == in_dim for d, in_dim in zip(data, self.input_dims)), \
+            'Data dimensions do not match cross-attention dimensions'
+        
+        assert len(set(d.shape[0] for d in data)) == 1, 'All data tensors must have the same batch size'
+
+        return data, mask
+
     def forward(
         self,
-        data,
-        mask=None,
-        return_embeddings=False
+        data: List[T] | T,
+        mask: List[T] | T | None = None,
+        latents: T | None = None,
+        return_embeddings: bool = False
     ):
-        batch_size, seq_len, dim = data.shape
+        is_multi_data = isinstance(data, (tuple, list))
 
-        assert dim == self.input_dim, f'Input must have {self.input_dim} dimensions, but found {dim}'
+        data, masks = self._validate_data(data, mask)
 
-        x = repeat(self.latents, 'n d -> b n d', b=batch_size)
+        batch_size = data[0].shape[0]
 
-        cross_block_kwargs = {'x_kv': data}
+        if latents is None:
+            assert self.latents is not None, 'Must explicitly provide latents if not initialized with num_latents'
+            latents = self.latents
+        else:
+            assert latents.shape[-1] == self.latent_dim, f'Latents must have {self.latent_dim} dimensions, but found {latents.shape[-1]}'
 
-        if mask is not None:
-            data, _, cu_seqlens_k, max_seqlen_in_batch_k = unpad_input(data, mask)
+        if latents.ndim == 2:
+            latents = repeat(latents, 'n d -> b n d', b=batch_size)
+        
+        x = latents
 
-            cross_block_kwargs = {
-                'x_kv': data,
-                'cu_seqlens_k': cu_seqlens_k,
-                'max_seqlen_k': max_seqlen_in_batch_k
-            }
+        cross_block_kwargs = None
 
-        for cross_block, self_attn_blocks in self.layers:
+        for (cross_block, self_attn_blocks), datum, mask in zip(self.layers, data, masks):
+            if is_multi_data or cross_block_kwargs is None:
+                cross_block_kwargs = {'x_kv': datum}
+
+                if mask is not None:
+                    datum, _, cu_seqlens_k, max_seqlen_in_batch_k = unpad_input(datum, mask)
+
+                    cross_block_kwargs = {
+                        'x_kv': datum,
+                        'cu_seqlens_k': cu_seqlens_k,
+                        'max_seqlen_k': max_seqlen_in_batch_k
+                    }
+
             # FlashAttention currently does not support key-value-only padding
             # We therefore have to _unpad_ the queries (aka latents) as well.
             # In the future, this could be used for a Perceiver AR implementation.
@@ -216,7 +268,7 @@ class Perceiver(nn.Module):
             if mask is not None:
                 x_mask = torch.ones(x.shape[:2], dtype=torch.bool, device=x.device)
                 x_cross, indices, cu_seqlens, max_seqlen_in_batch = unpad_input(x, x_mask)
-                
+
                 cross_block_kwargs.update({
                     'cu_seqlens': cu_seqlens,
                     'max_seqlen': max_seqlen_in_batch
