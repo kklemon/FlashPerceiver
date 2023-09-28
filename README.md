@@ -126,7 +126,7 @@ The following data has been obtained with a RTX 4090 and 24GB of VRAM.
 Acknowledgements
 ----------------
 
-The implementation is inspired by lucidrain's [Perceiver implementation](https://github.com/lucidrains/perceiver-pytorc) and would not have been possible without Tri Dao's [FlashAttention](https://github.com/Dao-AILab/flash-attention).
+The implementation is inspired by lucidrain's [Perceiver implementation](https://github.com/lucidrains/perceiver-pytorch) and would not have been possible without Tri Dao's [FlashAttention](https://github.com/Dao-AILab/flash-attention).
 
 Planned features
 ---------------
