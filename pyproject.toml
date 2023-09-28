@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "fast-perceiver"
-version = "0.1.4"
+version = "0.1.5"
 description = ""
 authors = ["Kristian Klemon <kristian.klemon@gmail.com>"]
 readme = "README.md"
@@ -11,9 +11,12 @@ python = "^3.10"
 torch = {version = "^2.0.1", source = "pytorch-gpu-src"}
 torchvision = {version = "^0.15.2", source = "pytorch-gpu-src"}
 einops = "^0.6.1"
-flash-attn = "^2.2.5"
-packaging = "^23.1"
-
+# FlashAttention has recently dropped PEP 5017 support since it led to issue with
+#  declaring torch as dependency.
+# Until this is resolved, we can't declare flash-attn as dependency and the user
+#  needs to install it manually.
+# See https://github.com/Dao-AILab/flash-attention/pull/193
+# flash-attn = "^2.2.5"
 
 [[tool.poetry.source]]
 name = "pytorch-gpu-src"
