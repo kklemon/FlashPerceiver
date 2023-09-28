@@ -1,29 +1,38 @@
 fast-perceiver
 =========================
 
-Fast and memory efficient PyTorch implementation of the Perceiver [1, 2, 3] attention architecture with FlashAttention [4, 5].
+Fast and memory efficient PyTorch implementation of the Perceiver [1, 2, 3] architecture with FlashAttention [4, 5] as attention backbone.
 
-Features:
+**Features:**
 
-* ⚡ More than 2x speedup over naive implementation
-* ⚡ Sub-linear<sup>1</sup> memory usage with respect to input sequence length and linear usage with respect to number of latent vectors
-* ⚡ Out-of-the-box support for rotary positional embeddings [6]
-* ⚡ Uses new and improved FlashAttention-2 implementation
-* ⚡ Supports arbitrary masking of inputs
+* ⚡ **More than 2x speedup over naive implementation.**
+* ⚡ **Sub-linear<sup>1</sup> memory usage with respect to input sequence length and linear usage with respect to number of latent vectors.**
+* ⚡ **Out-of-the-box support for rotary positional embeddings [6]**
+* ⚡ **Uses the new and improved FlashAttention-2 implementation**
+* ⚡ **Supports for multiple inputs and flexible masking**
 
 <sup>1</sup> For the attention components. See [Performance](#performance) for more information.
 
 Installation
 ------------
 
+**Note:** The `pyproject.toml` has recently been removed from the flash-attn repository and so did the PEP 517 compliance. This means that the flash-attn cannot be declared as dependency for this project anymore and thus needs to be manually until the situation changes in the future:
+
+```bash
+pip install flash-attn --no-build-isolation
+```
+
+Afterwards, install the actual `fast-perceiver` package:
+
+
 ```bash
 pip install fast-perceiver
 ```
 
-[FlashAttention](https://github.com/Dao-AILab/flash-attention) will be installed as part of the dependencies and may have to be compile locally. Note that this may take a while and fail for unsupported GPUs or CUDA versions. Please refer to the linked repository for further information and help with the installation.
-
 Usage
 -----
+
+### Code
 
 ```python
 import torch
@@ -40,7 +49,7 @@ num_latents = 512
 model = Perceiver(
     input_dim=in_dim,
     depth=8,
-    out_dim=out_dim,
+    output_dim=out_dim,
     num_latents=num_latents,
     latent_dim=latent_dim,
     cross_heads=1,
@@ -56,7 +65,7 @@ model = Perceiver(
 )
 
 # Note: FlashAttention only supports half-precision
-# We need to explicitly cast the model or alternative use torch.autocast
+# We need to explicitly cast the model or alternatively use torch.autocast
 model.to('cuda', torch.float16)
 
 x = torch.randn(32, seq_len, in_dim, dtype=torch.float16, device='cuda')
@@ -70,30 +79,35 @@ out = model(x)
 
 assert out.shape == (32, out_dim)
 
-# A input element-wise mask can be provided
+# A boolean element-wise mask can be provided
 # All non-True elements will be ignored
 out = model(x, mask=mask)
 
-# The raw final latents will be returned when `return_embeddings=True`
+# The embeddings prior to output projection can be
+#  retrieved with `return_embeddings=True`
 embeds = model(x, return_embeddings=True)
 
 assert embeds.shape == (32, num_latents, latent_dim)
 ```
 
+### Examples
+
+Other usage examples are provided in the `examples/` folder.
+
 Performance
 -----------
 
-The Perceiver is already designed and intended as a attention architecture with sub-quadratic compute and memory complexity in comparison to the quadratic requirements of a vanilla Transformer.
+The Perceiver is already designed and intended as an attention architecture with sub-quadratic compute and memory complexity in comparison to the quadratic requirements of a vanilla Transformer.
 
-A naive implementation will have $\mathcal{O}(nm)$ memory requirements for the cross-attention modules and $\mathcal{O}(n^2)$ complexity for the self-attention or _latent_ blocks, where $n$ is the number of latent vectors (fixed hyperparameter), $m$ the number of input elements and $m \gg n$ should generally apply.
+A naive implementation will have $\mathcal{O}(nm)$ memory usage for the cross-attention modules and $\mathcal{O}(n^2)$ complexity for the self-attention or _latent_ blocks, where $n$ the number of input elements , $m$ the number of latent vectors (fixed hyperparameter) and $n \gg m$ should generally apply.
 
-FlashAttention allows a memory usage reduction to $\mathcal{O}(n)$ for the cross-attention layers and $\mathcal{O}(n)$ for the self-attention layers. However, this only accounts for the computation of the attention mechanisms. The input sequence and corresponding keys and values within the cross-attention modules will still grow with $m$.
+FlashAttention can reduce the memory usage to $\mathcal{O}(\sqrt{nm})$ for the cross-attention layers and $\mathcal{O}(m)$ for the latent self-attention layers. However, this only accounts for the computation of the attention mechanism. The input sequence and corresponding keys and values within the cross-attention modules will still grow with $n$.
 
 Until the latter starts to dominate memory usage, this implementation allows to greatly scale the input sequence length. For instance, 16x larger input lengths can be achieved in comparison to [perceiver-pytorch](https://github.com/lucidrains/perceiver-pytorch) on a RTX 4090, keeping the other hyperparameters fixed (see `run_benchmarks.py` for the exact configuration).
 
 ### Benchmarks
 
-Benchmarks against other implementations (currently only `perceiver-pytorch`) can be performed with:
+Benchmarks against other implementations (currently only [perceiver-pytorch]([perceiver-pytorch](https://github.com/lucidrains/perceiver-pytorch)) can be performed with:
 
 ```bash
 python run_benchmarks.py
@@ -101,7 +115,7 @@ python run_benchmarks.py
 
 The script will create a `benchmark_results.csv`. The `create_plots.py` script can then be used to create plots.
 
-The following plots have been created using a single RTX 4090 with 24GB of VRAM.
+The following data has been obtained with a RTX 4090 and 24GB of VRAM.
 
 ![Benchmark results on speedup](figures/benchmark_speedup.png)
 
@@ -119,11 +133,11 @@ Planned features
 
 These are a few features that are either planned or WIP. If you have urgent demand for some of them, feel free to write an issue:
 
-- [ ] Perceiver IO [2] [WIP]
+- [X] Perceiver IO [2]
 - [ ] Perceiver AR [3] (or an AR demo in general)
-- [ ] Demos [WIP]
-- [ ] Tests [WIP]
-- [ ] Allow more flexible cross-attention configurations
+- [X] Demos
+- [X] Tests (see `tests/`)
+- [X] Allow more flexible cross-attention configurations
 - [ ] Benchmarks against other Perceiver implementations, e.g. [DeepMind's](https://github.com/deepmind/deepmind-research/tree/master/perceiver) or [Krasser's](https://github.com/krasserm/perceiver-io)
 - [ ] If FA2 is eventuelly merged into PyTorch, drop the flash-attn dependency
 
