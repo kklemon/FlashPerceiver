@@ -1,1 +1,1 @@
-from .modules import Perceiver
+from .perceiver import Perceiver, PerceiverIO

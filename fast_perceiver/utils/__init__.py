@@ -1,3 +1,4 @@
+from einops import repeat
 import torch
 import torch.nn as nn
 
@@ -30,3 +31,15 @@ def random_mask(x):
 
 def numel(m: nn.Module, only_trainable: bool = True):
     return sum(p.numel() for p in m.parameters() if not only_trainable or p.requires_grad)
+
+
+def meshgrid(*size: int, batch_size: int | None = None):
+    tensors = [torch.linspace(-1, 1, n) for n in size]
+    grid = torch.stack(
+        torch.meshgrid(tensors, indexing='ij'), -1
+    )
+
+    if batch_size is not None:
+        return repeat(grid, '... -> b ...', b=batch_size)
+
+    return grid

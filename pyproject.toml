@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "fast-perceiver"
-version = "0.1.3"
+version = "0.1.4"
 description = ""
 authors = ["Kristian Klemon <kristian.klemon@gmail.com>"]
 readme = "README.md"
@@ -28,6 +28,7 @@ seaborn = "^0.12.2"
 jupyter = "^1.0.0"
 perceiver-pytorch = "^0.8.7"
 pytest = "^7.4.0"
+pytorch-lamb = {git = "https://github.com/cybertronai/pytorch-lamb.git"}
 
 [build-system]
 requires = ["poetry-core"]
