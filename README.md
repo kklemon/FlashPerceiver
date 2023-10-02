@@ -140,6 +140,7 @@ These are a few features that are either planned or WIP. If you have urgent dema
 - [X] Allow more flexible cross-attention configurations
 - [ ] Benchmarks against other Perceiver implementations, e.g. [DeepMind's](https://github.com/deepmind/deepmind-research/tree/master/perceiver) or [Krasser's](https://github.com/krasserm/perceiver-io)
 - [ ] If FA2 is eventuelly merged into PyTorch, drop the flash-attn dependency
+- [ ] Configure and provide multiple inputs as dict
 
 References
 ----------
