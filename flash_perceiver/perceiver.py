@@ -64,24 +64,6 @@ def patched_mha(base_mha_cls):
                 self.Wqkv = linear_cls(self.embed_dim, 3 * inner_dim, bias=qkv_proj_bias)
 
             self.out_proj = linear_cls(inner_dim, self.embed_dim, bias=out_proj_bias)
-        
-        # def set_flash_attention(self, use_flash_attn: bool):
-        #     """
-        #     Enable or disbale use of FlashAttention.
-        #     """
-        #     inner_attn_cls = FlashSelfAttention if use_flash_attn else SelfAttention
-        #     inner_cross_attn_cls = FlashCrossAttention if use_flash_attn else CrossAttention
-
-        #     kwargs = dict(
-        #         causal=self.causal,
-        #         softmax_scale=self.softmax_scale,
-        #         attention_dropout=self.dropout
-        #     )
-
-        #     self.inner_attn = inner_attn_cls(**kwargs)
-        #     self.inner_cross_attn = inner_cross_attn_cls(**kwargs)
-
-        #     self.use_flash_attn = use_flash_attn
     
     return PatchedMHA
 
