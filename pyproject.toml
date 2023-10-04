@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "fast-perceiver"
-version = "0.1.6"
+version = "0.1.7"
 description = "Fast and memory efficient PyTorch implementation of the Perceiver with FlashAttention."
 authors = ["Kristian Klemon <kristian.klemon@gmail.com>"]
 readme = "README.md"
@@ -11,7 +11,7 @@ python = "^3.10"
 torch = {version = "^2.0.1", source = "pytorch-gpu-src"}
 torchvision = {version = "^0.15.2", source = "pytorch-gpu-src"}
 einops = "^0.7.0"
-# FlashAttention has recently dropped PEP 5017 support since it led to issue with
+# FlashAttention has recently dropped PEP 5017 support as it led to issue with
 #  declaring torch as dependency.
 # Until this is resolved, we can't declare flash-attn as dependency and the user
 #  needs to install it manually.
