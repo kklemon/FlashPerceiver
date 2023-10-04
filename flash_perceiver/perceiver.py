@@ -8,14 +8,7 @@ from einops import repeat
 from einops.layers.torch import Reduce
 
 from flash_attn.bert_padding import pad_input, unpad_input
-from flash_attn.modules.mha import (
-    SelfAttention,
-    FlashSelfAttention,
-    CrossAttention,
-    FlashCrossAttention,
-    MHA,
-    ParallelMHA
-)
+from flash_attn.modules.mha import MHA, ParallelMHA
 from flash_attn.modules.block import Block
 from flash_attn.modules.mlp import Mlp, GatedMlp
 from flash_perceiver.utils import cache_fn
