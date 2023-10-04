@@ -1,7 +1,7 @@
 import pytest
 import torch
 
-from fast_perceiver import Perceiver
+from flash_perceiver import Perceiver
 
 
 @pytest.mark.parametrize('output_dim', [None, 128])
@@ -20,4 +20,3 @@ def test_output_projection(output_dim):
         assert out.shape == (32, model.num_latents, model.latent_dim)
     else:
         assert out.shape == (32, output_dim)
-

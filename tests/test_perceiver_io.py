@@ -1,7 +1,7 @@
 import pytest
 import torch
 
-from fast_perceiver import PerceiverIO
+from flash_perceiver import PerceiverIO
 
 
 @pytest.mark.parametrize('query_dim', [32, 64])

@@ -1,7 +1,7 @@
 import pytest
 import torch
 
-from fast_perceiver.perceiver import PatchedMHA
+from flash_perceiver.perceiver import PatchedMHA
 
 
 @pytest.mark.parametrize('kv_dim', [None, 128])

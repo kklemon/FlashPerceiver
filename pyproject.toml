@@ -1,10 +1,10 @@
 [tool.poetry]
-name = "fast-perceiver"
+name = "flash-perceiver"
 version = "0.1.7"
 description = "Fast and memory efficient PyTorch implementation of the Perceiver with FlashAttention."
 authors = ["Kristian Klemon <kristian.klemon@gmail.com>"]
 readme = "README.md"
-packages = [{include = "fast_perceiver"}]
+packages = [{include = "flash_perceiver"}]
 
 [tool.poetry.dependencies]
 python = "^3.10"

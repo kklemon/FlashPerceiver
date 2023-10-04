@@ -1,8 +1,8 @@
 import pytest
 import torch
 
-from fast_perceiver import utils
-from fast_perceiver.perceiver import PerceiverBase
+from flash_perceiver import utils
+from flash_perceiver.perceiver import PerceiverBase
 
 
 @pytest.mark.parametrize('input_dim', [32, 64])

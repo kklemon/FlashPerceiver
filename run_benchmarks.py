@@ -13,7 +13,7 @@ from tqdm import tqdm
 from torch.utils.data import IterableDataset, DataLoader
 from torch.cuda import OutOfMemoryError
 from perceiver_pytorch import Perceiver as LucidrainsPerceiver
-from fast_perceiver import Perceiver
+from flash_perceiver import Perceiver
 
 
 sns.set_theme()
@@ -39,7 +39,7 @@ def build_lucidrains_perceiver(config, **kwargs):
     )
 
 
-def build_fast_perceiver(config, **kwargs):
+def build_flash_perceiver(config, **kwargs):
     return Perceiver(
         input_dim=config['input_dim'],
         depth=config['depth'],
@@ -90,9 +90,7 @@ benchmark_configs = [
 
 models = {
     'perceiver-pytorch': build_lucidrains_perceiver,
-    'fast-perceiver': build_fast_perceiver,
-    # TODO: not implemented yet
-    # 'fast-perceiver (parallel MHA)': partial(build_fast_perceiver, use_parallel_mha=True),
+    'flash-perceiver': build_flash_perceiver,
 }
 
 

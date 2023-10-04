@@ -1,8 +1,8 @@
 import pytest
 import torch
 
-from fast_perceiver.adapters import ImageAdapter
-from fast_perceiver.utils.encodings import NeRFPositionalEncoding
+from flash_perceiver.adapters import ImageAdapter
+from flash_perceiver.utils.encodings import NeRFPositionalEncoding
 
 
 @pytest.fixture

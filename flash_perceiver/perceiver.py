@@ -1,4 +1,3 @@
-import math
 from typing import List, Optional
 import torch
 
@@ -19,8 +18,7 @@ from flash_attn.modules.mha import (
 )
 from flash_attn.modules.block import Block
 from flash_attn.modules.mlp import Mlp, GatedMlp
-
-from fast_perceiver.utils import cache_fn
+from flash_perceiver.utils import cache_fn
 
 
 def patched_mha(base_mha_cls):

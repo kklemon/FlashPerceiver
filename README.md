@@ -1,4 +1,4 @@
-fast-perceiver
+FlashPerceiver
 =========================
 
 Fast and memory efficient PyTorch implementation of the Perceiver [1, 2, 3] architecture with FlashAttention [4, 5] as attention backbone.
@@ -22,11 +22,11 @@ Installation
 pip install flash-attn --no-build-isolation
 ```
 
-Afterwards, install the actual `fast-perceiver` package:
+Afterwards, install the actual `flash-perceiver` package:
 
 
 ```bash
-pip install fast-perceiver
+pip install flash-perceiver
 ```
 
 Usage
@@ -39,7 +39,7 @@ Usage
 ```python
 import torch
 
-from fast_perceiver import Perceiver, utils
+from flash_perceiver import Perceiver, utils
 
 batch_size, seq_len, in_dim = 32, 128, 256
 
@@ -163,7 +163,7 @@ This makes the architecture more flexible and can be used for cases such positio
 ```python
 import torch
 
-from fast_perceiver import PerceiverIO, utils
+from flash_perceiver import PerceiverIO, utils
 
 batch_size, seq_len, in_dim = 32, 128, 256
 
