@@ -5,11 +5,11 @@ Fast and memory efficient PyTorch implementation of the Perceiver [1, 2, 3] arch
 
 **Features:**
 
-* ⚡ **More than 2x speedup over naive implementation.**
-* ⚡ **Sub-linear<sup>1</sup> memory usage with respect to input sequence length and linear usage with respect to number of latent vectors.**
-* ⚡ **Out-of-the-box support for rotary positional embeddings [6]**
-* ⚡ **Uses the new and improved FlashAttention-2 implementation**
-* ⚡ **Supports for multiple inputs and flexible masking**
+* :zap: **More than 2x speedup over naive implementation.**
+* :zap: **Sub-linear<sup>1</sup> memory usage with respect to input sequence length and linear usage with respect to number of latent vectors.**
+* :zap: **Out-of-the-box support for rotary positional embeddings [6]**
+* :zap: **Uses the new and improved FlashAttention-2 implementation**
+* :zap: **Supports for multiple inputs and flexible masking**
 
 <sup>1</sup> For the attention components. See [Performance](#performance) for more information.
 
@@ -32,19 +32,20 @@ pip install fast-perceiver
 Usage
 -----
 
-### Code
+### Perceiver
+
+![The Perceiver architecture](./figures/perceiver.png)
 
 ```python
 import torch
 
-from fast_perceiver import Perceiver
+from fast_perceiver import Perceiver, utils
 
-in_dim = 256
-out_dim = 128
-seq_len = 128
+batch_size, seq_len, in_dim = 32, 128, 256
 
 latent_dim = 512
 num_latents = 512
+out_dim = 128
 
 model = Perceiver(
     input_dim=in_dim,
@@ -62,35 +63,156 @@ model = Perceiver(
     latent_attn_dropout=0.0,
     weight_tie_layers=False,
     gated_mlp=True,
-)
+    self_per_cross_attn=1,
+    use_flash_attn=True,
+).cuda()
 
-# Note: FlashAttention only supports half-precision
-# We need to explicitly cast the model or alternatively use torch.autocast
-model.to('cuda', torch.float16)
-
-x = torch.randn(32, seq_len, in_dim, dtype=torch.float16, device='cuda')
-
-seq_lens = torch.randint(1, seq_len + 1, (32,), device=x.device)
-mask = torch.arange(seq_len, device=x.device)[None, :] < seq_lens[:, None]
-
+data = torch.randn(batch_size, seq_len, in_dim, device='cuda')
 
 # `out_dim` specified; averages and projects output
-out = model(x)
+# Note: FlashAttention only supports half-precision.
+#  We need to use `torch.autocast` for the forward-pass
+with torch.autocast('cuda'):
+    out = model(data)
 
 assert out.shape == (32, out_dim)
+```
 
-# A boolean element-wise mask can be provided
-# All non-True elements will be ignored
-out = model(x, mask=mask)
+**Multiple inputs**
 
-# The embeddings prior to output projection can be
-#  retrieved with `return_embeddings=True`
-embeds = model(x, return_embeddings=True)
+A separate input for each cross-attention block can be used by providing a list of inputs to the `forward` method. The number of inputs must correspond to the `depth` configuration of the model.
+
+By providing a list of integers to the `input_dim` argument in the constructor, each input can be configured to have a different dimension.
+
+```python
+input_dims = [256, 512]
+
+model = Perceiver(
+    input_dim=input_dims,
+    depth=2,  # must equal len(input_dim)
+).cuda()
+
+inputs = [
+    torch.randn(batch_size, seq_len, in_dim, device='cuda')
+    for in_dim in input_dims
+]
+
+with torch.autocast('cuda'):
+    out = model(inputs)
+
+assert out.shape == (batch_size, num_latents, latent_dim)
+```
+
+**Masking**
+
+A boolean element-wise mask for the input can be provided. All non-True elements will be masked out within the cross-attention operation. If a list of inputs is provided, a list of masks for each input can be provided as well. This can also include `None` values for inputs without a mask.
+
+```python
+mask = utils.random_mask(data)  # [batch_size, seq_len]
+
+with torch.autocast('cuda'):
+    out = model(data, mask=mask)
+```
+
+**Extract Embeddings**
+
+If a value for `output_dim` has been provided to the constructor, the final latent vectors will be averaged and then projected to the desired dimension. To extract the representations prior to the projecting step, set `return_embeddings=True`:
+
+```python
+with torch.autocast('cuda'):
+    embeds = model(data, return_embeddings=True)
 
 assert embeds.shape == (32, num_latents, latent_dim)
 ```
 
-### Examples
+**Custom Latents**
+
+For some applications it can be useful to have custom sets of latent vectors. For instance, for a multi-task setting, each task could have a separate set of learned latents.
+
+The `forward` method supports custom latents via the `latents` argument. If not explicitly provided, the module's latent vectors will be used, otherwise the provided ones. These must have shape `[m, latent_dim]` or `[batch_size, n, latent_dim]` where $m$ can be arbitrary.
+
+To disable initializing random latent vectors as part of the model construction, pass `num_latents=None` to the constructor.
+
+**Extract Attention Weights**
+
+`return_attn_weights=True` can be passed to the `forward` method of a model to extract the normalized attention weights of each attention layer. A tuple of `(output, attn_weights)` will be returned in this case, where `attn_weights` is a list with one tensor per attention layer. This list follows the pattern `[cross_attn_0, self_attn_0_0, ..., cross_attn_1, self_attn_1_0]` where attention maps for cross-attention layers will have shape `(batch_size, cross_heads, num_latents, seq_len)` and self-attention maps have shape `(batch_size, latent_heads, num_latents, num_latents)`.
+
+:::warning
+:zap: This is an experimental feature and requires a modified implementation of FlashAttention, [unless the changes are eventually merged](https://github.com/Dao-AILab/flash-attention/pull/589).
+:::
+
+```python
+with torch.autocast('cuda'):
+    out, all_attn_weights = model(data, return_attn_weights=True)
+
+for i, attn_weights in enumerate(all_attn_weights):
+    if i % model.num_attention_layers_per_block == 0:
+        print('cross-attention map with shape', attn_weights.shape)
+    else:
+        print('self-attention map with shape', attn_weights.shape)
+
+```
+
+
+### PerceiverIO
+
+The [PerceiverIO](https://arxiv.org/abs/2107.14795) is a variant of the Perceiver architecture where the encoder tower is followed by a decoder module that allows task specific computation of outputs via sets of queries.
+
+This makes the architecture more flexible and can be used for cases such position specific decoding of values or multi-task settings.
+
+![The PerceiverIO architecture](./figures/perceiver-io.png)
+
+```python
+import torch
+
+from fast_perceiver import PerceiverIO, utils
+
+batch_size, seq_len, in_dim = 32, 128, 256
+
+depth = 8
+latent_dim = 512
+num_latents = 512
+query_dim = 128
+num_queries = 32
+proj_dim = 64
+
+model = PerceiverIO(
+    input_dim=in_dim,
+    query_dim=query_dim,
+    depth=depth,
+    proj_dim=proj_dim,
+    num_latents=num_latents,
+    latent_dim=latent_dim,
+    cross_heads=1,
+    cross_head_dim=64,
+    cross_rotary_emb_dim=0,
+    cross_attn_dropout=0.0,
+    latent_heads=8,
+    latent_head_dim=64,
+    latent_rotary_emb_dim=0,
+    latent_attn_dropout=0.0,
+    query_heads=1,
+    query_head_dim=64,
+    query_rotary_emb_dim=0,
+    query_attn_dropout=0.0,
+    weight_tie_layers=False,
+    gated_mlp=True,
+    use_flash_attn=True,
+).cuda()
+
+data = torch.randn(batch_size, seq_len, in_dim, device='cuda')
+
+# Can be learned or correspond to positions, tokens, etc.
+queries = torch.randn(num_queries, query_dim, device='cuda')
+
+with torch.autocast('cuda'):
+    out = model(data, queries=queries)
+
+assert out.shape == (batch_size, num_queries, proj_dim)
+```
+
+Examples
+--------
 
 Other usage examples are provided in the `examples/` folder.
 
@@ -141,6 +263,8 @@ These are a few features that are either planned or WIP. If you have urgent dema
 - [ ] Benchmarks against other Perceiver implementations, e.g. [DeepMind's](https://github.com/deepmind/deepmind-research/tree/master/perceiver) or [Krasser's](https://github.com/krasserm/perceiver-io)
 - [ ] If FA2 is eventuelly merged into PyTorch, drop the flash-attn dependency
 - [ ] Configure and provide multiple inputs as dict
+- [ ] TensorDict / tensorclass inputs
+- [X] Extract attention weights
 
 References
 ----------

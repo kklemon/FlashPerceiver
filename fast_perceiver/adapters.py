@@ -5,7 +5,7 @@ import torch
 import torch.nn as nn
 
 from fast_perceiver import utils
-from fast_perceiver.pos_encodings import BasePositionalEncoding
+from fast_perceiver.utils.encodings import BasePositionalEncoding
 
 
 class ImageAdapter(nn.Module):

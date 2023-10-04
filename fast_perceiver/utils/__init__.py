@@ -20,6 +20,10 @@ def cache_fn(f):
     return cached_fn
 
 
+def identity(x, *args, **kwargs):
+    return x
+
+
 def random_mask(x):
     bs, n = x.shape[:2]
 

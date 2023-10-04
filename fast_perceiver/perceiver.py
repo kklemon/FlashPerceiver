@@ -1,3 +1,4 @@
+import math
 from typing import List, Optional
 import torch
 
@@ -8,7 +9,14 @@ from einops import repeat
 from einops.layers.torch import Reduce
 
 from flash_attn.bert_padding import pad_input, unpad_input
-from flash_attn.modules.mha import MHA, ParallelMHA
+from flash_attn.modules.mha import (
+    SelfAttention,
+    FlashSelfAttention,
+    CrossAttention,
+    FlashCrossAttention,
+    MHA,
+    ParallelMHA
+)
 from flash_attn.modules.block import Block
 from flash_attn.modules.mlp import Mlp, GatedMlp
 
@@ -32,8 +40,13 @@ def patched_mha(base_mha_cls):
             if num_heads is None:
                 assert head_dim is not None, 'Must specify either num_heads or head_dim'
                 num_heads = embed_dim // head_dim
-
+            
             super().__init__(embed_dim, num_heads, *args, **kwargs)
+
+            # Missing attributes
+            self.causal = kwargs.get('causal', False)
+            self.dropout = kwargs.get('dropout', 0.0)
+            self.softmax_scale = kwargs.get('softmax_scale', None)
 
             self.kv_dim = kv_dim or self.embed_dim
 
@@ -53,8 +66,27 @@ def patched_mha(base_mha_cls):
                 self.Wqkv = linear_cls(self.embed_dim, 3 * inner_dim, bias=qkv_proj_bias)
 
             self.out_proj = linear_cls(inner_dim, self.embed_dim, bias=out_proj_bias)
+        
+        # def set_flash_attention(self, use_flash_attn: bool):
+        #     """
+        #     Enable or disbale use of FlashAttention.
+        #     """
+        #     inner_attn_cls = FlashSelfAttention if use_flash_attn else SelfAttention
+        #     inner_cross_attn_cls = FlashCrossAttention if use_flash_attn else CrossAttention
 
+        #     kwargs = dict(
+        #         causal=self.causal,
+        #         softmax_scale=self.softmax_scale,
+        #         attention_dropout=self.dropout
+        #     )
+
+        #     self.inner_attn = inner_attn_cls(**kwargs)
+        #     self.inner_cross_attn = inner_cross_attn_cls(**kwargs)
+
+        #     self.use_flash_attn = use_flash_attn
+    
     return PatchedMHA
+
 
 PatchedMHA = patched_mha(MHA)
 PatchedParallelMHA = patched_mha(ParallelMHA)
@@ -128,7 +160,12 @@ class PerceiverBase(nn.Module):
 
         self.num_latents = num_latents
         self.latent_dim = latent_dim
+        self.cross_heads = 1
+        self.cross_head_dim = 64
+        self.latent_heads = 8
+        self.latent_head_dim = 64
         self.depth = depth
+        self.self_per_cross_attn = self_per_cross_attn
         self.use_flash_attn = use_flash_attn
 
         if self.num_latents is not None:
@@ -194,6 +231,34 @@ class PerceiverBase(nn.Module):
             ]))
 
 
+    def set_flash_attn(self, use_flash_attn: bool):
+        """
+        Enable or disbale use of FlashAttention.
+        """
+        for cross_block, self_attn_blocks in self.layers:
+            cross_block.mixer.set_flash_attn(use_flash_attn)
+
+            for self_attn_block in self_attn_blocks:
+                self_attn_block.mixer.set_flash_attn(use_flash_attn)
+
+        self.use_flash_attn = use_flash_attn
+
+    @property
+    def num_attention_layers_per_block(self):
+        return 1 + self.self_per_cross_attn
+    
+    @property
+    def num_attention_layers(self):
+        return self.depth * self.num_attention_layers_per_block
+    
+    @property
+    def num_self_attention_layers(self):
+        return self.depth * self.self_per_cross_attn
+    
+    @property
+    def num_cross_attention_layers(self):
+        return self.depth
+    
     def _validate_data(self, data: List[T] | T, mask: List[T] | T | None = None):
         if isinstance(data, T):
             data = [data] * self.depth
@@ -219,7 +284,8 @@ class PerceiverBase(nn.Module):
         self,
         data: List[T] | T,
         mask: List[T] | T | None = None,
-        latents: T | None = None
+        latents: T | None = None,
+        return_attn_weights: bool = False
     ):
         """
         Args:
@@ -237,7 +303,14 @@ class PerceiverBase(nn.Module):
                 If not provided, the model's learned latent vectors will be used.
                 If `None` has been provided as `num_latents` argument during model initialization, custom latents
                 must be provided.
+            return_attn_weights: Whether to return the attention weights of the attention modules.
         """
+        if self.use_flash_attn and return_attn_weights:
+            raise NotImplementedError(
+                'FlashAttention does not support returning attention weights. '
+                'Please disable use of FA with `set_flash_attention(False)`.'
+            )
+
         is_multi_data = isinstance(data, (tuple, list))
 
         data, masks = self._validate_data(data, mask)
@@ -257,16 +330,30 @@ class PerceiverBase(nn.Module):
         
         x = latents
 
-        cross_block_kwargs = None
+        mixer_kwargs = {}
+        cross_block_mixer_kwargs = {}
+        attn_weights = []
+
+        def handle_output(args):
+            if return_attn_weights:
+                assert isinstance(args, tuple) and len(args) == 2
+                out, attn_weight = args
+                attn_weights.append(attn_weight)
+                return out
+            else:
+                return args
+
+        if return_attn_weights:
+            mixer_kwargs['return_attn_weights'] = True
 
         for (cross_block, self_attn_blocks), datum, mask in zip(self.layers, data, masks):
-            if is_multi_data or cross_block_kwargs is None:
-                cross_block_kwargs = {'x_kv': datum}
+            if is_multi_data or not cross_block_mixer_kwargs:
+                cross_block_mixer_kwargs = {'x_kv': datum}
 
                 if mask is not None:
                     datum, _, cu_seqlens_k, max_seqlen_in_batch_k = unpad_input(datum, mask)
 
-                    cross_block_kwargs = {
+                    cross_block_mixer_kwargs = {
                         'x_kv': datum,
                         'cu_seqlens_k': cu_seqlens_k,
                         'max_seqlen_k': max_seqlen_in_batch_k
@@ -281,27 +368,33 @@ class PerceiverBase(nn.Module):
                 x_mask = torch.ones(x.shape[:2], dtype=torch.bool, device=x.device)
                 x_cross, indices, cu_seqlens, max_seqlen_in_batch = unpad_input(x, x_mask)
 
-                cross_block_kwargs.update({
+                cross_block_mixer_kwargs.update({
                     'cu_seqlens': cu_seqlens,
                     'max_seqlen': max_seqlen_in_batch
                 })
             else:
                 x_cross = x
 
-            x = cross_block(x_cross, mixer_kwargs=cross_block_kwargs)[0]
+            x = handle_output(cross_block(
+                x_cross,
+                mixer_kwargs={**mixer_kwargs, **cross_block_mixer_kwargs}
+            ))[0]
 
             if mask is not None:
                 x = pad_input(x, indices, batch_size, self.num_latents)
 
             for self_attn_block in self_attn_blocks:
-                x = self_attn_block(x)[0]
+                x = handle_output(self_attn_block(x, mixer_kwargs=mixer_kwargs))[0]
+        
+        if return_attn_weights:
+            return x, attn_weights
         
         return x
 
 
 class Perceiver(PerceiverBase):
     """
-    Implementation of the [PerceiverIO architecture](https://arxiv.org/abs/2103.03206) with compute and
+    Implementation of the [Perceiver architecture](https://arxiv.org/abs/2103.03206) with compute and
     memory efficient [FlashAttention](https://arxiv.org/abs/2205.14135) as underlying attention implementation
 
     Args:
@@ -390,7 +483,8 @@ class Perceiver(PerceiverBase):
         data: List[T] | T,
         mask: List[T] | T | None = None,
         latents: T | None = None,
-        return_embeddings: bool = False
+        return_embeddings: bool = False,
+        return_attn_weights: bool = False
     ):
         """
         Args:
@@ -409,13 +503,25 @@ class Perceiver(PerceiverBase):
                 If `None` has been provided as `num_latents` argument during model initialization, custom latents
                 must be provided.
             return_embeddings: Whether to return the final latent vectors instead of the output projection.
+            return_attn_weights: Whether to return the attention weights of the attention modules.
         """
-        x = super().forward(data, mask, latents)
+        outputs = super().forward(data, mask, latents, return_attn_weights)
 
-        if return_embeddings:
-            return x
+        if return_attn_weights:
+            x, attn_weights = outputs
+        else:
+            x = outputs
 
-        return self.out_proj(x)
+        def make_output(x):
+            if return_attn_weights:
+                return x, attn_weights
+            else:
+                return x
+
+        if not return_embeddings:
+            x = self.out_proj(x)
+
+        return make_output(x)
 
 
 class PerceiverIO(PerceiverBase):
@@ -533,7 +639,8 @@ class PerceiverIO(PerceiverBase):
         mask: List[T] | T | None = None,
         latents: T | None = None,
         queries: T | None = None,
-        query_mask: T | None = None
+        query_mask: T | None = None,
+        return_attn_weights: bool = False
     ):
         """
         Args:
@@ -554,11 +661,22 @@ class PerceiverIO(PerceiverBase):
             queries: Optional query vectors which will interact with the latents via cross-attention to produce the output.
                 Must have shape `(batch_size, num_queries, query_dim)`.
             query_mask: Not supported yet.
-            """
-        embeds = super().forward(data, mask, latents)
+            return_attn_weights: Whether to return the attention weights of the attention modules.
+        """
+        outputs = super().forward(data, mask, latents, return_attn_weights)
+
+        if return_attn_weights:
+            embeds, attn_weights = outputs
+        else:
+            embeds = outputs
+
+        def make_output(x):
+            if return_attn_weights:
+                return x, attn_weights
+            return x
 
         if queries is None:
-            return embeds
+            return make_output(embeds)
         
         assert query_mask is None, \
             'query_mask is not supported yet'
@@ -573,4 +691,4 @@ class PerceiverIO(PerceiverBase):
         })[0]
         out = self.out_proj(out)
 
-        return out
+        return make_output(out)

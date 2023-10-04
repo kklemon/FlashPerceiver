@@ -10,7 +10,7 @@ from pytorch_lamb import Lamb
 from tqdm import tqdm
 from fast_perceiver import utils, Perceiver
 from fast_perceiver.adapters import ImageAdapter
-from fast_perceiver.pos_encodings import NeRFPositionalEncoding
+from fast_perceiver.utils.encodings import NeRFPositionalEncoding
 from fast_perceiver.utils.training import CosineWithWarmupLR
 
 

@@ -1,5 +1,4 @@
 import pytest
-from sympy import N
 import torch
 
 from fast_perceiver import utils
@@ -202,6 +201,62 @@ def test_flash_attn(use_flash_attn):
     out = model(x)
 
     assert out.shape == (32, model.num_latents, model.latent_dim)
+
+
+@pytest.mark.parametrize('with_fa', [False, True])
+def test_setting_fa(with_fa):
+    model = PerceiverBase(
+        input_dim=128,
+        depth=4,
+        use_flash_attn=with_fa,
+    )
+
+    x = torch.randn(32, 64, 128)
+
+    out_before = model(x)
+
+    model.set_flash_attn(not with_fa)
+
+    out_after = model(x)
+
+    assert out_before.shape == (32, model.num_latents, model.latent_dim)
+
+    # Is this high tolerance reasonable?
+    assert torch.allclose(out_before, out_after, atol=1e-3), \
+        str(abs(out_before - out_after))
+
+
+@pytest.mark.parametrize('return_attn_weights', [False, True])
+@pytest.mark.parametrize('use_flash_attn', [False, True])
+def test_return_attn_weights(return_attn_weights, use_flash_attn):
+    model = PerceiverBase(
+        input_dim=128,
+        depth=4,
+        latent_dim=256,
+        use_flash_attn=use_flash_attn,
+    )
+
+    x = torch.randn(32, 64, 128)
+
+    if return_attn_weights and use_flash_attn:
+        with pytest.raises(NotImplementedError):
+            out = model(x, return_attn_weights=return_attn_weights)
+    else:
+        if return_attn_weights:
+            out, all_attn_weights = model(x, return_attn_weights=True)
+
+            assert len(all_attn_weights) == model.num_attention_layers
+
+            for i, attn_weights in enumerate(all_attn_weights):
+                # Even layers are cross-attention, odd layers are self-attention
+                if i % 2 == 0:
+                    assert attn_weights.shape == (32, model.cross_heads, model.num_latents, x.shape[1])
+                else:
+                    assert attn_weights.shape == (32, model.latent_heads, model.num_latents, model.num_latents)
+        else:
+            out = model(x, return_attn_weights=False)
+        
+        assert out.shape == (32, model.num_latents, model.latent_dim)
 
 
 @pytest.mark.skip(reason='rotary positional embeddings are not yet supported for cross-attention')

@@ -32,6 +32,7 @@ jupyter = "^1.0.0"
 perceiver-pytorch = "^0.8.7"
 pytest = "^7.4.0"
 pytorch-lamb = {git = "https://github.com/cybertronai/pytorch-lamb.git"}
+pytest-readme = "^1.0.1"
 
 [build-system]
 requires = ["poetry-core"]
