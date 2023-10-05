@@ -1,15 +1,13 @@
 [tool.poetry]
 name = "flash-perceiver"
-version = "0.1.7"
+version = "0.1.8"
 description = "Fast and memory efficient PyTorch implementation of the Perceiver with FlashAttention."
 authors = ["Kristian Klemon <kristian.klemon@gmail.com>"]
 readme = "README.md"
 packages = [{include = "flash_perceiver"}]
 
 [tool.poetry.dependencies]
-python = "^3.10"
-torch = {version = "^2.0.1", source = "pytorch-gpu-src"}
-torchvision = {version = "^0.15.2", source = "pytorch-gpu-src"}
+python = ">=3.9"
 einops = "^0.7.0"
 # FlashAttention has recently dropped PEP 5017 support as it led to issue with
 #  declaring torch as dependency.
@@ -17,11 +15,6 @@ einops = "^0.7.0"
 #  needs to install it manually.
 # See https://github.com/Dao-AILab/flash-attention/pull/193
 # flash-attn = "^2.2.5"
-
-[[tool.poetry.source]]
-name = "pytorch-gpu-src"
-url = "https://download.pytorch.org/whl/cu118"
-priority = "explicit"
 
 
 [tool.poetry.group.dev.dependencies]
@@ -33,6 +26,13 @@ perceiver-pytorch = "^0.8.7"
 pytest = "^7.4.0"
 pytorch-lamb = {git = "https://github.com/cybertronai/pytorch-lamb.git"}
 pytest-readme = "^1.0.1"
+torch = {version = "^2.0.1", source = "pytorch-gpu-src"}
+torchvision = {version = "^0.15.2", source = "pytorch-gpu-src"}
+
+[[tool.poetry.source]]
+name = "pytorch-gpu-src"
+url = "https://download.pytorch.org/whl/cu118"
+priority = "explicit"
 
 [build-system]
 requires = ["poetry-core"]
