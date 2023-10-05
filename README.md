@@ -135,7 +135,7 @@ To disable initializing random latent vectors as part of the model construction,
 
 **Extract Attention Weights**
 
-> :warning: This is an experimental feature and requires a modified implementation of FlashAttention, [unless the changes are eventually merged](https://github.com/Dao-AILab/flash-attention/pull/589).
+> :warning: This is an experimental feature and requires a modified implementation of FlashAttention [until the changes are eventually merged](https://github.com/Dao-AILab/flash-attention/pull/589).
 
 `return_attn_weights=True` can be passed to the `forward` method of a model to extract the normalized attention weights of each attention layer. A tuple of `(output, attn_weights)` will be returned in this case, where `attn_weights` is a list with one tensor per attention layer. This list follows the pattern `[cross_attn_0, self_attn_0_0, ..., cross_attn_1, self_attn_1_0]` where attention maps for cross-attention layers will have shape `(batch_size, cross_heads, num_latents, seq_len)` and self-attention maps have shape `(batch_size, latent_heads, num_latents, num_latents)`.
 
