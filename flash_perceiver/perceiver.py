@@ -324,20 +324,26 @@ class PerceiverBase(nn.Module):
                 cross_block_mixer_kwargs = {'x_kv': datum}
 
                 if mask is not None:
-                    datum, _, cu_seqlens_k, max_seqlen_in_batch_k = unpad_input(datum, mask)
+                    if self.use_flash_attn:
+                        datum, _, cu_seqlens_k, max_seqlen_in_batch_k = unpad_input(datum, mask)
 
-                    cross_block_mixer_kwargs = {
-                        'x_kv': datum,
-                        'cu_seqlens_k': cu_seqlens_k,
-                        'max_seqlen_k': max_seqlen_in_batch_k
-                    }
+                        cross_block_mixer_kwargs = {
+                            'x_kv': datum,
+                            'cu_seqlens_k': cu_seqlens_k,
+                            'max_seqlen_k': max_seqlen_in_batch_k
+                        }
+                    else:
+                        cross_block_mixer_kwargs = {
+                            'x_kv': datum,
+                            'key_padding_mask': mask,
+                        }
 
             # FlashAttention currently does not support key-value-only padding
             # We therefore have to _unpad_ the queries (aka latents) as well.
             # In the future, this could be used for a Perceiver AR implementation.
             # TODO: We could compute the dummy mask tensors for the queries directly here
             #  without calling the unpad_input function.
-            if mask is not None:
+            if mask is not None and self.use_flash_attn:
                 x_mask = torch.ones(x.shape[:2], dtype=torch.bool, device=x.device)
                 x_cross, indices, cu_seqlens, max_seqlen_in_batch = unpad_input(x, x_mask)
 
@@ -353,7 +359,7 @@ class PerceiverBase(nn.Module):
                 mixer_kwargs={**mixer_kwargs, **cross_block_mixer_kwargs}
             ))[0]
 
-            if mask is not None:
+            if mask is not None and self.use_flash_attn:
                 x = pad_input(x, indices, batch_size, self.num_latents)
 
             for self_attn_block in self_attn_blocks:

@@ -13,6 +13,7 @@ from flash_perceiver.perceiver import PerceiverBase
 @pytest.mark.parametrize('input_length', [128, 256])
 @pytest.mark.parametrize('batch_size', [32])
 @pytest.mark.parametrize('mask', [False, True])
+@pytest.mark.parametrize('use_flash_attn', [False, True])
 def test_model(
     input_dim,
     depth,
@@ -21,7 +22,8 @@ def test_model(
     self_per_cross_attn,
     input_length,
     batch_size,
-    mask
+    mask,
+    use_flash_attn
 ):
     model = PerceiverBase(
         input_dim=input_dim,
@@ -29,6 +31,7 @@ def test_model(
         num_latents=num_latents,
         latent_dim=latent_dim,
         self_per_cross_attn=self_per_cross_attn,
+        use_flash_attn=use_flash_attn
     )
 
     x = torch.randn(batch_size, input_length, input_dim)
@@ -49,6 +52,7 @@ def test_model(
 @pytest.mark.parametrize('cross_head_dim', [None, 32])
 @pytest.mark.parametrize('latent_heads', [None, 1, 4])
 @pytest.mark.parametrize('latent_head_dim', [None, 32])
+@pytest.mark.parametrize('use_flash_attn', [False, True])
 def test_attn_heads(
     input_dim,
     depth,
@@ -56,6 +60,7 @@ def test_attn_heads(
     cross_head_dim,
     latent_heads,
     latent_head_dim,
+    use_flash_attn
 ):
     build_model = lambda: PerceiverBase(
         input_dim=input_dim,
@@ -63,7 +68,8 @@ def test_attn_heads(
         cross_heads=cross_heads,
         cross_head_dim=cross_head_dim,
         latent_heads=latent_heads,
-        latent_head_dim=latent_head_dim
+        latent_head_dim=latent_head_dim,
+        use_flash_attn=use_flash_attn
     )
 
     if (
@@ -81,17 +87,20 @@ def test_attn_heads(
 @pytest.mark.parametrize('depth', [4])
 @pytest.mark.parametrize('cross_attn_dropout', [0.0, 0.2])
 @pytest.mark.parametrize('latent_attn_dropout', [0.0, 0.2])
+@pytest.mark.parametrize('use_flash_attn', [False, True])
 def test_dropout(
     input_dim,
     depth,
     cross_attn_dropout,
-    latent_attn_dropout
+    latent_attn_dropout,
+    use_flash_attn
 ):
     model = PerceiverBase(
         input_dim=input_dim,
         depth=depth,
         cross_attn_dropout=cross_attn_dropout,
         latent_attn_dropout=latent_attn_dropout,
+        use_flash_attn=use_flash_attn
     )
 
     input = torch.randn(32, 128, input_dim)
@@ -106,12 +115,14 @@ def test_dropout(
 
 
 @pytest.mark.parametrize('num_latents', [None, 128])
-def test_num_latents(num_latents):
+@pytest.mark.parametrize('use_flash_attn', [False, True])
+def test_num_latents(num_latents, use_flash_attn):
     model = PerceiverBase(
         input_dim=64,
         depth=4,
         num_latents=num_latents,
         latent_dim=128,
+        use_flash_attn=use_flash_attn
     )
 
     data = torch.randn(32, 128, 64)
@@ -124,12 +135,14 @@ def test_num_latents(num_latents):
 
 
 @pytest.mark.parametrize('latent_dim', [64, 128])
-def test_custom_latents(latent_dim):
+@pytest.mark.parametrize('use_flash_attn', [False, True])
+def test_custom_latents(latent_dim, use_flash_attn):
     model = PerceiverBase(
         input_dim=64,
         depth=4,
         num_latents=128,
         latent_dim=64,
+        use_flash_attn=use_flash_attn
     )
 
     latents = torch.randn(128, latent_dim)
@@ -143,11 +156,13 @@ def test_custom_latents(latent_dim):
         assert out.shape == (32, 128, latent_dim)
 
 
-def test_weight_tying():
+@pytest.mark.parametrize('use_flash_attn', [False, True])
+def test_weight_tying(use_flash_attn):
     build_model = lambda weight_tie_layers: PerceiverBase(
         input_dim=64,
         depth=4,
         weight_tie_layers=weight_tie_layers,
+        use_flash_attn=use_flash_attn
     )
 
     weight_tied_model = build_model(True)
@@ -162,7 +177,8 @@ def test_weight_tying():
     [64, 128, 256]
 ])
 @pytest.mark.parametrize('use_mask', [False, True])
-def test_multi_input(input_dim, use_mask):
+@pytest.mark.parametrize('use_flash_attn', [False, True])
+def test_multi_input(input_dim, use_mask, use_flash_attn):
     mask = None
 
     if isinstance(input_dim, int):
@@ -180,7 +196,8 @@ def test_multi_input(input_dim, use_mask):
 
     model = PerceiverBase(
         input_dim=input_dim,
-        depth=depth
+        depth=depth,
+        use_flash_attn=use_flash_attn
     )
 
     out = model(data, mask=mask)
@@ -189,7 +206,8 @@ def test_multi_input(input_dim, use_mask):
 
 
 @pytest.mark.parametrize('use_flash_attn', [False, True])
-def test_flash_attn(use_flash_attn):
+@pytest.mark.parametrize('use_mask', [False, True])
+def test_flash_attn(use_flash_attn, use_mask):
     model = PerceiverBase(
         input_dim=128,
         depth=4,
@@ -198,13 +216,19 @@ def test_flash_attn(use_flash_attn):
 
     x = torch.randn(32, 64, 128)
 
-    out = model(x)
+    if use_mask:
+        mask = utils.random_mask(x)
+    else:
+        mask = None
+
+    out = model(x, mask=mask)
 
     assert out.shape == (32, model.num_latents, model.latent_dim)
 
 
 @pytest.mark.parametrize('with_fa', [False, True])
-def test_setting_fa(with_fa):
+@pytest.mark.parametrize('use_mask', [False, True])
+def test_setting_fa(with_fa, use_mask):
     model = PerceiverBase(
         input_dim=128,
         depth=4,
@@ -213,11 +237,16 @@ def test_setting_fa(with_fa):
 
     x = torch.randn(32, 64, 128)
 
-    out_before = model(x)
+    if use_mask:
+        mask = utils.random_mask(x)
+    else:
+        mask = None
+
+    out_before = model(x, mask=mask)
 
     model.set_flash_attn(not with_fa)
 
-    out_after = model(x)
+    out_after = model(x, mask=mask)
 
     assert out_before.shape == (32, model.num_latents, model.latent_dim)
 
@@ -228,7 +257,8 @@ def test_setting_fa(with_fa):
 
 @pytest.mark.parametrize('return_attn_weights', [False, True])
 @pytest.mark.parametrize('use_flash_attn', [False, True])
-def test_return_attn_weights(return_attn_weights, use_flash_attn):
+@pytest.mark.parametrize('use_mask', [False, True])
+def test_return_attn_weights(return_attn_weights, use_flash_attn, use_mask):
     model = PerceiverBase(
         input_dim=128,
         depth=4,
@@ -238,12 +268,18 @@ def test_return_attn_weights(return_attn_weights, use_flash_attn):
 
     x = torch.randn(32, 64, 128)
 
+    if use_mask:
+        mask = utils.random_mask(x)
+    else:
+        mask = None
+
+
     if return_attn_weights and use_flash_attn:
         with pytest.raises(NotImplementedError):
-            out = model(x, return_attn_weights=return_attn_weights)
+            out = model(x, return_attn_weights=return_attn_weights, mask=mask)
     else:
         if return_attn_weights:
-            out, all_attn_weights = model(x, return_attn_weights=True)
+            out, all_attn_weights = model(x, return_attn_weights=True, mask=mask)
 
             assert len(all_attn_weights) == model.num_attention_layers
 
