@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import List, Literal, Optional
 import torch
 
 from functools import partial
@@ -410,6 +410,7 @@ class Perceiver(PerceiverBase):
         input_dim: List[int] | int,
         depth: int,
         output_dim: int | None = None,
+        output_mode: Literal['average', 'concat', 'first'] = 'mean',
         num_latents: Optional[int] = 512,
         latent_dim: int = 512,
         cross_heads: int = 1,
@@ -447,12 +448,19 @@ class Perceiver(PerceiverBase):
         )
 
         self.output_dim = output_dim
+        self.output_mode = output_mode
 
         if self.output_dim is not None:
+            if output_mode == 'concat':
+                assert self.num_latents is not None, \
+                    'Must explicitly provide num_latents if output_mode is concat'
+                inter_dim = self.num_latents * self.latent_dim
+            else:
+                inter_dim = self.latent_dim
+
             self.out_proj = nn.Sequential(
-                Reduce('b n d -> b d', 'mean'),
-                nn.LayerNorm(self.latent_dim),
-                nn.Linear(self.latent_dim, self.output_dim)
+                nn.LayerNorm(inter_dim),
+                nn.Linear(inter_dim, self.output_dim)
             )
         else:
             self.out_proj = nn.Identity()
@@ -497,7 +505,16 @@ class Perceiver(PerceiverBase):
             else:
                 return x
 
-        if not return_embeddings:
+        if not return_embeddings and self.output_dim is not None:
+            if self.output_mode == 'average':
+                x = x.mean(1)
+            elif self.output_mode == 'concat':
+                x = x.flatten(1)
+            elif self.output_mode == 'first':
+                x = x[:, 0]
+            else:
+                assert False
+
             x = self.out_proj(x)
 
         return make_output(x)

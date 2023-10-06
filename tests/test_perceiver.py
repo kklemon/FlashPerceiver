@@ -5,11 +5,13 @@ from flash_perceiver import Perceiver
 
 
 @pytest.mark.parametrize('output_dim', [None, 128])
-def test_output_projection(output_dim):
+@pytest.mark.parametrize('output_mode', ['average', 'concat', 'first'])
+def test_output_projection(output_dim, output_mode):
     model = Perceiver(
         input_dim=128,
         depth=4,
         output_dim=output_dim,
+        output_mode=output_mode
     )
 
     x = torch.randn(32, 64, 128)
