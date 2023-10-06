@@ -9,7 +9,7 @@ Fast and memory efficient PyTorch implementation of the Perceiver [1, 2, 3] arch
 * :zap: **Sub-linear<sup>1</sup> memory usage with respect to input sequence length and linear usage with respect to number of latent vectors.**
 * :zap: **Out-of-the-box support for rotary positional embeddings [6]**
 * :zap: **Uses the new and improved FlashAttention-2 implementation**
-* :zap: **Supports for multiple inputs and flexible masking**
+* :zap: **Support for multiple inputs and flexible masking**
 
 <sup>1</sup> For the attention components. See [Performance](#performance) for more information.
 
