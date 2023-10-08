@@ -444,7 +444,7 @@ class Perceiver(PerceiverBase):
         input_dim: List[int] | int,
         depth: int,
         output_dim: int | None = None,
-        output_mode: Literal['average', 'concat', 'first'] = 'mean',
+        output_mode: Literal['average', 'concat', 'first'] = 'average',
         num_latents: Optional[int] = 512,
         latent_dim: int = 512,
         cross_heads: int = 1,
