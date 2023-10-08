@@ -66,6 +66,25 @@ PatchedParallelMHA = patched_mha(ParallelMHA)
 T = torch.Tensor
 
 
+class TokenDrop(nn.Module):
+    def __init__(self, p: float):
+        super().__init__()
+        assert 0 <= p < 1, 'Drop probability p must be 0 <= p < 1'
+        self.p = p
+    
+    def forward(self, x: T):
+        b, n, *_ = x.shape
+        device = x.device
+
+        if self.training and self.p > 0:
+            probas = torch.ones(b, n, device=device) / n
+            keep_indices = torch.multinomial(probas, int((1 - self.p) * n), replacement=False)
+            batch_indices = torch.arange(b, device=device).unsqueeze(-1)
+            x = x[batch_indices, keep_indices]
+        
+        return x
+
+
 class PerceiverBase(nn.Module):
     """
     Base class for FlashAttention-based implementations of Perceiver and PerceiverIO.
@@ -92,6 +111,8 @@ class PerceiverBase(nn.Module):
         latent_rotary_emb_dim: Dimension of latent self-attention rotary embeddings.
             Defaults to 0 (no rotary embeddings).
         latent_attn_dropout: Dropout for latent self-attention.
+        latent_drop: Dropout rate for the latent vectors.
+            Defaults to 0 (no latent dropout).
         weight_tie_layers: Whether to share the weights of the cross-attention and
             latent self-attention blocks. Defaults to False.
         gated_mlp: Whether to use gated MLPs. Doubles the number of parameters
@@ -123,6 +144,7 @@ class PerceiverBase(nn.Module):
         latent_head_dim: int = 64,
         latent_rotary_emb_dim: int = 0,
         latent_attn_dropout: float = 0.0,
+        latent_drop: float = 0.0,
         weight_tie_layers: bool = False,
         gated_mlp: bool = True,
         self_per_cross_attn: int = 1,
@@ -215,6 +237,8 @@ class PerceiverBase(nn.Module):
                 zero_tokens = None
 
             self.zero_tokens.append(zero_tokens)
+
+        self.latent_drop = TokenDrop(latent_drop)
 
 
     def set_flash_attn(self, use_flash_attn: bool):
@@ -313,8 +337,10 @@ class PerceiverBase(nn.Module):
 
         if latents.ndim == 2:
             latents = repeat(latents, 'n d -> b n d', b=batch_size)
-        
-        x = latents
+
+        x = self.latent_drop(latents)
+
+        num_latents = x.shape[1]
 
         mixer_kwargs = {}
         cross_block_mixer_kwargs = {}
@@ -385,7 +411,7 @@ class PerceiverBase(nn.Module):
             ))[0]
 
             if mask is not None and self.use_flash_attn:
-                x = pad_input(x, indices, batch_size, self.num_latents)
+                x = pad_input(x, indices, batch_size, num_latents)
 
             for self_attn_block in self_attn_blocks:
                 x = handle_output(self_attn_block(x, mixer_kwargs=mixer_kwargs))[0]
@@ -422,6 +448,8 @@ class Perceiver(PerceiverBase):
         latent_rotary_emb_dim: Dimension of latent self-attention rotary embeddings.
             Defaults to 0 (no rotary embeddings).
         latent_attn_dropout: Dropout for latent self-attention.
+        latent_drop: Dropout rate for the latent vectors.
+            Defaults to 0 (no latent dropout).
         weight_tie_layers: Whether to share the weights of the cross-attention and
             latent self-attention blocks. Defaults to False.
         gated_mlp: Whether to use gated MLPs. Doubles the number of parameters
@@ -455,12 +483,16 @@ class Perceiver(PerceiverBase):
         latent_head_dim: int = 64,
         latent_rotary_emb_dim: int = 0,
         latent_attn_dropout: float = 0.0,
+        latent_drop: float = 0.0,
         weight_tie_layers: bool = False,
         gated_mlp: bool = True,
         self_per_cross_attn: int = 1,
         num_zero_tokens: int | None = None,
         use_flash_attn: bool = True,
     ):
+        if latent_drop > 0 and output_mode == 'concat':
+            raise ValueError('Cannot use latent dropout with output mode concat')
+        
         super().__init__(
             input_dim=input_dim,
             depth=depth,
@@ -474,6 +506,7 @@ class Perceiver(PerceiverBase):
             latent_head_dim=latent_head_dim,
             latent_rotary_emb_dim=latent_rotary_emb_dim,
             latent_attn_dropout=latent_attn_dropout,
+            latent_drop=latent_drop,
             weight_tie_layers=weight_tie_layers,
             gated_mlp=gated_mlp,
             self_per_cross_attn=self_per_cross_attn,
@@ -547,7 +580,7 @@ class Perceiver(PerceiverBase):
             elif self.output_mode == 'first':
                 x = x[:, 0]
             else:
-                assert False
+                raise ValueError(f'Unknown output mode {self.output_mode}. Valid modes are "average", "concat", "first"')
 
             x = self.out_proj(x)
 
@@ -580,6 +613,8 @@ class PerceiverIO(PerceiverBase):
         latent_rotary_emb_dim: Dimension of latent self-attention rotary embeddings.
             Defaults to 0 (no rotary embeddings).
         latent_attn_dropout: Dropout for latent self-attention.
+        latent_drop: Dropout rate for the latent vectors.
+            Defaults to 0 (no latent dropout).
         query_heads: Number of heads for the latent-query cross-attention. Defaults to 1.
         query_head_dim: Dimension of the latent-query cross-attention heads.
         query_rotary_emb_dim: Dimension of the rotary embeddings for the latent-query cross-attention layer.
@@ -616,6 +651,7 @@ class PerceiverIO(PerceiverBase):
         latent_head_dim: int = 64,
         latent_rotary_emb_dim: int = 0,
         latent_attn_dropout: float = 0.0,
+        latent_drop: float = 0.0,
         query_heads: int = 1,
         query_head_dim: int = 64,
         query_rotary_emb_dim: int = 0,
@@ -638,6 +674,7 @@ class PerceiverIO(PerceiverBase):
             latent_head_dim=latent_head_dim,
             latent_rotary_emb_dim=latent_rotary_emb_dim,
             latent_attn_dropout=latent_attn_dropout,
+            latent_drop=latent_drop,
             weight_tie_layers=weight_tie_layers,
             gated_mlp=gated_mlp,
             self_per_cross_attn=depth,
