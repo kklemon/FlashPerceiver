@@ -14,6 +14,7 @@ from flash_perceiver.perceiver import PerceiverBase
 @pytest.mark.parametrize('batch_size', [32])
 @pytest.mark.parametrize('mask', [False, True])
 @pytest.mark.parametrize('use_flash_attn', [False, True])
+@pytest.mark.parametrize('num_zero_tokens', [None, 0, 32])
 def test_model(
     input_dim,
     depth,
@@ -23,7 +24,8 @@ def test_model(
     input_length,
     batch_size,
     mask,
-    use_flash_attn
+    use_flash_attn,
+    num_zero_tokens
 ):
     model = PerceiverBase(
         input_dim=input_dim,
@@ -31,7 +33,8 @@ def test_model(
         num_latents=num_latents,
         latent_dim=latent_dim,
         self_per_cross_attn=self_per_cross_attn,
-        use_flash_attn=use_flash_attn
+        use_flash_attn=use_flash_attn,
+        num_zero_tokens=num_zero_tokens
     )
 
     x = torch.randn(batch_size, input_length, input_dim)

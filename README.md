@@ -64,6 +64,7 @@ model = Perceiver(
     weight_tie_layers=False,
     gated_mlp=True,
     self_per_cross_attn=1,
+    num_zero_tokens=None,
     use_flash_attn=True,
 ).cuda()
 

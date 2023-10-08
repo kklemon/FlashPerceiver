@@ -5,7 +5,6 @@ from functools import partial
 from torch import nn
 
 from einops import repeat
-from einops.layers.torch import Reduce
 
 from flash_attn.bert_padding import pad_input, unpad_input
 from flash_attn.modules.mha import MHA, ParallelMHA
@@ -99,6 +98,15 @@ class PerceiverBase(nn.Module):
             in those layers. Defaults to True.
         self_per_cross_attn: Number of self-attention blocks per cross-attention block.
             Defaults to 1.
+        num_zero_tokens: Number of learned *zero* tokens to prepend to the inputs.
+            These zero tokens can be seen as alternate tokens to which to attend if no informative
+            other tokens are available.
+            The idea that such a mechanism could be useful has been discussed in
+            [Attention Is Off By One](https://www.evanmiller.org/attention-is-off-by-one.html) and
+            [Vision Transformers Need Registers](https://arxiv.org/abs/2309.16588).
+            Defaults to `None` (no zero tokens).
+        use_flash_attn: Whether to use FlashAttention or a naive and thus less efficient attention 
+            implementation. Defaults to True.
     """
     def __init__(
         self,
@@ -118,7 +126,7 @@ class PerceiverBase(nn.Module):
         weight_tie_layers: bool = False,
         gated_mlp: bool = True,
         self_per_cross_attn: int = 1,
-        use_parallel_mha: bool = False,
+        num_zero_tokens: int | None = None,
         use_flash_attn: bool = True,
     ):
         super().__init__()
@@ -151,10 +159,7 @@ class PerceiverBase(nn.Module):
         else:
             self.mlp_cls = Mlp
 
-        if use_parallel_mha:
-            self.mha_cls = PatchedParallelMHA
-        else:
-            self.mha_cls = PatchedMHA
+        self.mha_cls = PatchedMHA
 
         get_cross_attn_block = lambda in_dim: Block(
             dim=latent_dim,
@@ -188,6 +193,7 @@ class PerceiverBase(nn.Module):
         get_cross_attn_block, get_self_attn_block = map(cache_fn, (get_cross_attn_block, get_self_attn_block))
 
         self.layers = nn.ModuleList([])
+        self.zero_tokens = nn.ParameterList([])
 
         for i, in_dim in enumerate(self.input_dims):
             should_cache = i > 0 and weight_tie_layers
@@ -200,8 +206,15 @@ class PerceiverBase(nn.Module):
 
             self.layers.append(nn.ModuleList([
                 get_cross_attn_block(in_dim=in_dim, **cache_args),
-                self_attns
+                self_attns,
             ]))
+
+            if num_zero_tokens:
+                zero_tokens = nn.Parameter(torch.randn(num_zero_tokens, in_dim))
+            else:
+                zero_tokens = None
+
+            self.zero_tokens.append(zero_tokens)
 
 
     def set_flash_attn(self, use_flash_attn: bool):
@@ -319,7 +332,19 @@ class PerceiverBase(nn.Module):
         if return_attn_weights:
             mixer_kwargs['return_attn_weights'] = True
 
-        for (cross_block, self_attn_blocks), datum, mask in zip(self.layers, data, masks):
+        for (cross_block, self_attn_blocks), zero_tokens, datum, mask in zip(
+            self.layers, self.zero_tokens, data, masks
+        ):
+            if zero_tokens is not None:
+                zero_tokens = repeat(zero_tokens, 'n d -> b n d', b=batch_size)
+                datum = torch.cat([zero_tokens, datum], dim=1)
+
+                if mask is not None:
+                    zero_token_mask = torch.ones(
+                        zero_tokens.shape[:2], device=zero_tokens.device, dtype=torch.bool
+                    )
+                    mask = torch.cat([zero_token_mask, mask], dim=1)
+            
             if is_multi_data or not cross_block_mixer_kwargs:
                 cross_block_mixer_kwargs = {'x_kv': datum}
 
@@ -403,6 +428,15 @@ class Perceiver(PerceiverBase):
             in those layers. Defaults to True.
         self_per_cross_attn: Number of self-attention blocks per cross-attention block.
             Defaults to 1.
+        num_zero_tokens: Number of learned *zero* tokens to prepend to the inputs.
+            These zero tokens can be seen as alternate tokens to which to attend if no informative
+            other tokens are available.
+            The idea that such a mechanism could be useful has been discussed in
+            [Attention Is Off By One](https://www.evanmiller.org/attention-is-off-by-one.html) and
+            [Vision Transformers Need Registers](https://arxiv.org/abs/2309.16588).
+            Defaults to `None` (no zero tokens).
+        use_flash_attn: Whether to use FlashAttention or a naive and thus less efficient attention 
+            implementation. Defaults to True.
     """
     def __init__(
         self,
@@ -424,7 +458,7 @@ class Perceiver(PerceiverBase):
         weight_tie_layers: bool = False,
         gated_mlp: bool = True,
         self_per_cross_attn: int = 1,
-        use_parallel_mha: bool = False,
+        num_zero_tokens: int | None = None,
         use_flash_attn: bool = True,
     ):
         super().__init__(
@@ -443,7 +477,7 @@ class Perceiver(PerceiverBase):
             weight_tie_layers=weight_tie_layers,
             gated_mlp=gated_mlp,
             self_per_cross_attn=self_per_cross_attn,
-            use_parallel_mha=use_parallel_mha,
+            num_zero_tokens=num_zero_tokens,
             use_flash_attn=use_flash_attn
         )
 
@@ -555,6 +589,15 @@ class PerceiverIO(PerceiverBase):
             latent self-attention blocks. Defaults to False.
         gated_mlp: Whether to use gated MLPs. Doubles the number of parameters
             in those layers. Defaults to True.
+        num_zero_tokens: Number of learned *zero* tokens to prepend to the inputs.
+            These zero tokens can be seen as alternate tokens to which to attend if no informative
+            other tokens are available.
+            The idea that such a mechanism could be useful has been discussed in
+            [Attention Is Off By One](https://www.evanmiller.org/attention-is-off-by-one.html) and
+            [Vision Transformers Need Registers](https://arxiv.org/abs/2309.16588).
+            Defaults to `None` (no zero tokens).
+        use_flash_attn: Whether to use FlashAttention or a naive and thus less efficient attention 
+            implementation. Defaults to True.
     """
     def __init__(
         self,
@@ -579,7 +622,7 @@ class PerceiverIO(PerceiverBase):
         query_attn_dropout: float = 0.0,
         weight_tie_layers: bool = False,
         gated_mlp: bool = True,
-        use_parallel_mha: bool = False,
+        num_zero_tokens: int | None = None,
         use_flash_attn: bool = True,
     ):
         super().__init__(
@@ -598,7 +641,7 @@ class PerceiverIO(PerceiverBase):
             weight_tie_layers=weight_tie_layers,
             gated_mlp=gated_mlp,
             self_per_cross_attn=depth,
-            use_parallel_mha=use_parallel_mha,
+            num_zero_tokens=num_zero_tokens,
             use_flash_attn=use_flash_attn
         )
 
