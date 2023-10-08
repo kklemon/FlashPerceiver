@@ -190,6 +190,7 @@ model = PerceiverIO(
     latent_head_dim=64,
     latent_rotary_emb_dim=0,
     latent_attn_dropout=0.0,
+    latent_drop=0.0,
     query_heads=1,
     query_head_dim=64,
     query_rotary_emb_dim=0,
