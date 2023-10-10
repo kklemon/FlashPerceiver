@@ -265,6 +265,8 @@ These are a few features that are either planned or WIP. If you have urgent dema
 - [ ] Configure and provide multiple inputs as dict
 - [ ] TensorDict / tensorclass inputs
 - [X] Extract attention weights
+- [ ] Add fancy badges in README
+- [ ] Use custom attention modules for more flexibility
 
 References
 ----------
