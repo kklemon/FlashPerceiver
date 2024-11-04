@@ -1,7 +1,7 @@
 FlashPerceiver
 =========================
 
-Fast and memory efficient PyTorch implementation of the Perceiver [1, 2, 3] architecture with FlashAttention [4, 5] as attention backbone.
+Fast and memory efficient PyTorch implementation of the Perceiver [1, 2, 3] architecture with FlashAttention [4, 5] as attention backend.
 
 **Features:**
 
